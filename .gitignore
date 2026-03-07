@@ -1,0 +1,17 @@
+# ビルド成果物
+gh-pm
+dist/
+
+# 設定ファイル（テンプレートは .example として管理する）
+.gpm.yml
+
+# スナップショット履歴（ローカルデータ）
+.gpm-history/
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# OS
+.DS_Store

@@ -1,0 +1,80 @@
+# GitHub Projects v2 のアイテム一覧を取得するクエリ
+#
+# GraphQL はデータの「形」をクエリで指定する。
+# REST API と違い、必要なフィールドだけを取得できる。
+#
+# 変数:
+#   $owner: String!      - GitHub Organization 名
+#   $number: Int!        - Projects 番号
+#   $first: Int!         - 1ページあたりの取得件数（最大 100）
+#   $after: String       - ページネーション用カーソル（最初は null）
+
+query GetProjectItems($owner: String!, $number: Int!, $first: Int!, $after: String) {
+  organization(login: $owner) {
+    projectV2(number: $number) {
+      items(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage  # まだ次のページがあるか
+          endCursor    # 次のページを取得するときに $after に渡す値
+        }
+        nodes {
+          id
+          # fieldValues でカスタムフィールドの値を取得する
+          # Status フィールドの現在値とその更新日時を取得する
+          fieldValues(first: 20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name        # ステータスの値（"In Progress" など）
+                updatedAt   # このフィールドが最後に変更された日時
+                field {
+                  ... on ProjectV2SingleSelectField {
+                    name    # フィールド名（"Status" など）
+                  }
+                }
+              }
+            }
+          }
+          # issue または PR の内容を取得する
+          content {
+            ... on Issue {
+              number
+              title
+              url
+              labels(first: 10) {
+                nodes {
+                  name
+                }
+              }
+              comments {
+                totalCount
+              }
+              assignees(first: 10) {
+                nodes {
+                  login  # GitHub ID
+                }
+              }
+            }
+            ... on PullRequest {
+              number
+              title
+              url
+              labels(first: 10) {
+                nodes {
+                  name
+                }
+              }
+              comments {
+                totalCount
+              }
+              assignees(first: 10) {
+                nodes {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

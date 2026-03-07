@@ -1,0 +1,30 @@
+# テスト用ダミー設定ファイル
+# 実際の org 名・メンバー名は使わないこと
+
+project:
+  owner: test-org
+  number: 1
+
+fields:
+  status:
+    name: Status
+    values:
+      todo: "Todo"
+      in_progress: "In Progress"
+      in_review: "In Review"
+      done: "Done"
+
+teams:
+  team-a:
+    members:
+      - user-a1
+      - user-a2
+  team-b:
+    members:
+      - user-b1
+
+# alerts:
+#   wip_per_person: 3
+#   anomaly_percentile: 95
+#   review_bounce: 3
+#   zero_done_days: 14

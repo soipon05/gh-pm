@@ -1,0 +1,38 @@
+# .gpm.yml - gh pm init で自動生成される設定ファイル
+# このファイルをコピーして .gpm.yml として使う
+# トークン・シークレットは絶対に書かないこと
+
+project:
+  owner: example-org           # GitHub Organization 名
+  number: 1                    # GitHub Projects 番号（URL の /projects/N）
+
+# Status フィールドのマッピング
+# init ウィザードが API から自動検出した値を設定する
+fields:
+  status:
+    name: Status               # Projects 上のフィールド名
+    values:
+      todo: "Todo"
+      in_progress: "In Progress"
+      in_review: "In Review"
+      done: "Done"
+
+# チーム定義
+teams:
+  backend:
+    members:
+      - alice
+      - bob
+  frontend:
+    members:
+      - charlie
+      - diana
+
+# アラート閾値（省略時はデフォルト値を使用）
+# デフォルトは理論的根拠に基づく推奨値
+# プロジェクトに合わない場合のみ上書きする
+# alerts:
+#   wip_per_person: 3      # デフォルト: 2（Little's Law）
+#   anomaly_percentile: 95 # デフォルト: 85（Vacanti）
+#   review_bounce: 3       # デフォルト: 2
+#   zero_done_days: 14     # デフォルト: 7

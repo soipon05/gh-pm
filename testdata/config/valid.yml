@@ -1,0 +1,29 @@
+project:
+  owner: test-org
+  number: 42
+
+fields:
+  status:
+    name: Status
+    values:
+      todo: "Todo"
+      in_progress: "In Progress"
+      in_review: "In Review"
+      done: "Done"
+      blocked: "Blocked"
+
+teams:
+  backend:
+    members:
+      - alice
+      - bob
+  frontend:
+    members:
+      - charlie
+      - diana
+
+alerts:
+  wip_per_person: 3
+  anomaly_percentile: 90
+  review_bounce: 3
+  zero_done_days: 14

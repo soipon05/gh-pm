@@ -1,0 +1,11 @@
+project:
+  owner: test-org
+
+fields:
+  status:
+    name: Status
+    values:
+      todo: "Todo"
+      in_progress: "In Progress"
+      in_review: "In Review"
+      done: "Done"

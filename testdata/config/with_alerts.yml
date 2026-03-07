@@ -1,0 +1,24 @@
+project:
+  owner: alert-org
+  number: 5
+
+fields:
+  status:
+    name: Status
+    values:
+      todo: "Backlog"
+      in_progress: "Working"
+      in_review: "Reviewing"
+      done: "Shipped"
+
+teams:
+  platform:
+    members:
+      - eve
+      - frank
+
+alerts:
+  wip_per_person: 4
+  anomaly_percentile: 95
+  review_bounce: 1
+  zero_done_days: 3

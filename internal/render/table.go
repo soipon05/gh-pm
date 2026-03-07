@@ -1,0 +1,145 @@
+// Package render はターミナルへの出力を担当する。
+// GitHub API から取得したデータを整形してユーザーに見せる。
+package render
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/fatih/color"
+)
+
+// TeamSummary は1チームの進捗集計結果。
+type TeamSummary struct {
+	Name       string
+	Todo       []Item
+	InProgress []Item
+	InReview   []Item
+	Done       []Item
+}
+
+// Item は表示する1件のアイテム。
+type Item struct {
+	Number         int
+	Title          string
+	Assignees      []string
+	Status         string
+	StatusCategory string // "todo" / "in_progress" / "in_review" / "done" / "blocked"
+	ElapsedDays    int
+	AlertLevel     string // "" / "warning" / "critical"
+}
+
+// PrintSummaryTable は全チームのサマリーテーブルをターミナルに出力する。
+func PrintSummaryTable(teams []TeamSummary, noColor bool) {
+	if noColor {
+		color.NoColor = true
+	}
+
+	now := time.Now()
+	fmt.Printf("=== プロジェクト進捗 (%s) ===\n\n", now.Format("2006-01-02"))
+
+	// ヘッダー
+	fmt.Printf("%-12s  %5s  %12s  %10s  %8s\n", "チーム", "Todo", "In Progress", "In Review", "Done(7d)")
+	fmt.Println("──────────────────────────────────────────────────")
+
+	totalTodo, totalIP, totalIR, totalDone := 0, 0, 0, 0
+	for _, t := range teams {
+		fmt.Printf("%-12s  %5d  %12d  %10d  %8d\n",
+			t.Name, len(t.Todo), len(t.InProgress), len(t.InReview), len(t.Done))
+		totalTodo += len(t.Todo)
+		totalIP += len(t.InProgress)
+		totalIR += len(t.InReview)
+		totalDone += len(t.Done)
+	}
+
+	fmt.Println()
+	fmt.Printf("%-12s  %5d  %12d  %10d  %8d\n", "合計:", totalTodo, totalIP, totalIR, totalDone)
+}
+
+// PrintTeamDetail は1チームの詳細をターミナルに出力する。
+func PrintTeamDetail(team TeamSummary, noColor bool) {
+	if noColor {
+		color.NoColor = true
+	}
+
+	fmt.Printf("\n─── %s チーム詳細 ────────────────────────\n", team.Name)
+
+	printStatusSection("In Progress", "in_progress", team.InProgress, noColor)
+	printStatusSection("In Review", "in_review", team.InReview, noColor)
+	printStatusSection("Todo", "todo", team.Todo, noColor)
+}
+
+// printStatusSection はステータスごとのアイテムリストを出力する。
+func printStatusSection(name, category string, items []Item, noColor bool) {
+	if len(items) == 0 {
+		return
+	}
+
+	dot := statusDot(category, noColor)
+	fmt.Printf("%s %s\n", dot, name)
+
+	for _, item := range items {
+		assignee := "未アサイン"
+		if len(item.Assignees) > 0 {
+			assignee = strings.Join(item.Assignees, ", ")
+		}
+
+		elapsed := ""
+		if item.ElapsedDays > 0 {
+			elapsed = fmt.Sprintf("%dd", item.ElapsedDays)
+		}
+
+		alert := alertMarker(item.AlertLevel)
+		if alert != "" && !noColor {
+			if item.AlertLevel == "critical" {
+				alert = color.RedString(alert)
+			} else {
+				alert = color.YellowString(alert)
+			}
+		}
+
+		// #番号 タイトル (担当者) 経過日数 アラート
+		fmt.Printf("  #%d %s (%s)", item.Number, item.Title, assignee)
+		if elapsed != "" {
+			fmt.Printf("  %s", elapsed)
+		}
+		if alert != "" {
+			fmt.Printf(" %s", alert)
+		}
+		fmt.Println()
+	}
+	fmt.Println()
+}
+
+// statusDot はステータスに対応するドット記号を返す。
+// --no-color 時は * を返す。
+func statusDot(statusCategory string, noColor bool) string {
+	if noColor {
+		return "*"
+	}
+	switch statusCategory {
+	case "in_progress":
+		return color.YellowString("●")
+	case "in_review":
+		return color.BlueString("●")
+	case "todo":
+		return color.WhiteString("●")
+	case "done":
+		return color.GreenString("●")
+	default:
+		return "●"
+	}
+}
+
+// alertMarker はアラートレベルに基づくマーカーを返す。
+func alertMarker(level string) string {
+	switch level {
+	case "critical":
+		return "▲▲"
+	case "warning":
+		return "▲"
+	default:
+		return ""
+	}
+}

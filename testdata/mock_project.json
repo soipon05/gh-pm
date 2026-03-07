@@ -1,0 +1,330 @@
+{
+  "schema_version": "2.0",
+  "generated_at": "2026-03-05T09:00:00+09:00",
+
+  "project": {
+    "owner": "example-org",
+    "number": 1,
+    "title": "Sprint Board"
+  },
+
+  "team": {
+    "name": "backend",
+    "members": ["alice", "bob", "charlie", "diana"]
+  },
+
+  "flow_metrics": {
+    "wip": 14,
+    "team_size": 4,
+    "wip_per_person": 3.5,
+    "throughput_7d": 1,
+    "throughput_30d": 6,
+    "cycle_time_days": { "p50": 14, "p85": 21, "p95": 28 }
+  },
+
+  "diagnostics": {
+    "bottleneck": {
+      "data": [
+        { "status": "In Progress", "count": 9, "avg_age_days": 12.8, "score": 115.2 },
+        { "status": "In Review", "count": 5, "avg_age_days": 16.6, "score": 83.0 }
+      ]
+    },
+    "wip_per_person": {
+      "data": [
+        { "member": "alice", "wip": 4, "items": [101, 102, 103, 104], "flag": "critical" },
+        { "member": "bob", "wip": 4, "items": [201, 202, 203, 501], "flag": "critical" },
+        { "member": "charlie", "wip": 3, "items": [301, 302, 303], "flag": "warning" },
+        { "member": "diana", "wip": 3, "items": [401, 402, 403], "flag": "warning" }
+      ],
+      "team_avg": 3.5
+    },
+    "review_cycles": {
+      "data": [
+        { "number": 104, "title": "カート機能実装", "bounces": 3, "comments": 47 },
+        { "number": 203, "title": "商品詳細画面", "bounces": 2, "comments": 32 }
+      ]
+    },
+    "anomalies": {
+      "percentiles": {
+        "In Progress": { "p50": 12, "p85": 22, "p95": 24 },
+        "In Review": { "p50": 17, "p85": 20, "p95": 20 }
+      },
+      "outliers": [
+        { "number": 301, "status": "In Progress", "age_days": 24, "vs_p85": "+2 days" },
+        { "number": 203, "status": "In Review", "age_days": 20, "vs_p85": "at p85" }
+      ]
+    }
+  },
+
+  "ai_hint": {
+    "priority_signals": ["wip_per_person", "bottleneck", "review_cycles"],
+    "root_cause_hypothesis": "WIP過多 → コンテキストスイッチ → サイクルタイム増大 → レビュー滞留",
+    "recommended_actions": [
+      "WIP制限を1人2件以下に設定",
+      "In Review滞留アイテム（#104, #203, #501）の優先レビュー",
+      "CI/CDパイプライン（#301）のブロック解除"
+    ]
+  },
+
+  "items": [
+    {
+      "number": 101,
+      "title": "ユーザー認証API実装",
+      "url": "https://github.com/example-org/repo/issues/101",
+      "assignees": ["alice"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-10T10:00:00+09:00",
+      "elapsed_days": 22,
+      "labels": ["backend", "auth"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-10T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 102,
+      "title": "商品一覧API実装",
+      "url": "https://github.com/example-org/repo/issues/102",
+      "assignees": ["alice"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-20T10:00:00+09:00",
+      "elapsed_days": 12,
+      "labels": ["backend", "product"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-20T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 103,
+      "title": "決済API実装",
+      "url": "https://github.com/example-org/repo/issues/103",
+      "assignees": ["alice"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-25T10:00:00+09:00",
+      "elapsed_days": 7,
+      "labels": ["backend", "payment"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-25T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 104,
+      "title": "カート機能実装",
+      "url": "https://github.com/example-org/repo/issues/104",
+      "assignees": ["alice"],
+      "status": "In Review",
+      "status_category": "in_review",
+      "status_changed_at": "2026-02-15T10:00:00+09:00",
+      "elapsed_days": 17,
+      "labels": ["backend", "cart"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-01-20T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-01T10:00:00+09:00" },
+        { "from": "In Review", "to": "In Progress", "at": "2026-02-05T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-08T10:00:00+09:00" },
+        { "from": "In Review", "to": "In Progress", "at": "2026-02-10T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-15T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 201,
+      "title": "注文履歴画面",
+      "url": "https://github.com/example-org/repo/issues/201",
+      "assignees": ["bob"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-18T10:00:00+09:00",
+      "elapsed_days": 14,
+      "labels": ["frontend"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-18T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 202,
+      "title": "ログイン画面リデザイン",
+      "url": "https://github.com/example-org/repo/issues/202",
+      "assignees": ["bob"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-22T10:00:00+09:00",
+      "elapsed_days": 10,
+      "labels": ["frontend", "design"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-22T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 203,
+      "title": "商品詳細画面",
+      "url": "https://github.com/example-org/repo/issues/203",
+      "assignees": ["bob"],
+      "status": "In Review",
+      "status_category": "in_review",
+      "status_changed_at": "2026-02-12T10:00:00+09:00",
+      "elapsed_days": 20,
+      "labels": ["frontend"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-01-25T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-05T10:00:00+09:00" },
+        { "from": "In Review", "to": "In Progress", "at": "2026-02-08T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-12T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 301,
+      "title": "CI/CDパイプライン構築",
+      "url": "https://github.com/example-org/repo/issues/301",
+      "assignees": ["charlie"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-08T10:00:00+09:00",
+      "elapsed_days": 24,
+      "labels": ["infra"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-08T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 302,
+      "title": "ステージング環境構築",
+      "url": "https://github.com/example-org/repo/issues/302",
+      "assignees": ["charlie"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-20T10:00:00+09:00",
+      "elapsed_days": 12,
+      "labels": ["infra"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-20T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 303,
+      "title": "デプロイ自動化スクリプト",
+      "url": "https://github.com/example-org/repo/issues/303",
+      "assignees": ["charlie"],
+      "status": "In Review",
+      "status_category": "in_review",
+      "status_changed_at": "2026-02-19T10:00:00+09:00",
+      "elapsed_days": 13,
+      "labels": ["infra"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-10T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-19T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 401,
+      "title": "E2Eテスト基盤",
+      "url": "https://github.com/example-org/repo/issues/401",
+      "assignees": ["diana"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-24T10:00:00+09:00",
+      "elapsed_days": 8,
+      "labels": ["test"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-24T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 402,
+      "title": "API仕様書作成",
+      "url": "https://github.com/example-org/repo/issues/402",
+      "assignees": ["diana"],
+      "status": "In Review",
+      "status_category": "in_review",
+      "status_changed_at": "2026-02-17T10:00:00+09:00",
+      "elapsed_days": 15,
+      "labels": ["docs"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-10T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-17T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 403,
+      "title": "DBマイグレーション設計",
+      "url": "https://github.com/example-org/repo/issues/403",
+      "assignees": ["diana"],
+      "status": "In Progress",
+      "status_category": "in_progress",
+      "status_changed_at": "2026-02-26T10:00:00+09:00",
+      "elapsed_days": 6,
+      "labels": ["backend", "db"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-26T10:00:00+09:00" }
+      ]
+    },
+    {
+      "number": 501,
+      "title": "管理画面初期設定",
+      "url": "https://github.com/example-org/repo/issues/501",
+      "assignees": ["bob"],
+      "status": "In Review",
+      "status_category": "in_review",
+      "status_changed_at": "2026-02-14T10:00:00+09:00",
+      "elapsed_days": 18,
+      "labels": ["frontend", "admin"],
+      "transitions": [
+        { "from": "Todo", "to": "In Progress", "at": "2026-02-01T10:00:00+09:00" },
+        { "from": "In Progress", "to": "In Review", "at": "2026-02-14T10:00:00+09:00" }
+      ]
+    }
+  ],
+
+  "alerts": [
+    {
+      "trigger": "wip_overload",
+      "level": "critical",
+      "detail": "alice: WIP 4件（閾値: 2件）",
+      "items": [101, 102, 103, 104],
+      "member": "alice"
+    },
+    {
+      "trigger": "wip_overload",
+      "level": "critical",
+      "detail": "bob: WIP 4件（閾値: 2件）",
+      "items": [201, 202, 203, 501],
+      "member": "bob"
+    },
+    {
+      "trigger": "review_bottleneck",
+      "level": "critical",
+      "detail": "In Review 5件 >= In Progress 9件 ではないが、レビュー滞留あり",
+      "items": [104, 203, 501]
+    },
+    {
+      "trigger": "review_bounce",
+      "level": "warning",
+      "detail": "#104 カート機能実装: 差し戻し3回",
+      "items": [104]
+    },
+    {
+      "trigger": "anomaly",
+      "level": "warning",
+      "detail": "#301 In Progress 24d（p85: 22d）",
+      "items": [301]
+    },
+    {
+      "trigger": "anomaly",
+      "level": "warning",
+      "detail": "#203 In Review 20d（p85: 20d）",
+      "items": [203]
+    }
+  ],
+
+  "summary": {
+    "total": 14,
+    "by_status": {
+      "In Progress": 9,
+      "In Review": 5,
+      "Done": 0
+    },
+    "done_last_7days": 1,
+    "done_last_30days": 6
+  }
+}
