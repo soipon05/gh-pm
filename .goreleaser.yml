@@ -1,0 +1,41 @@
+version: 2
+
+project_name: gh-pm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: gh-pm
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+
+archives:
+  - format: zip
+    # gh extension install が認識する命名規則: {name}_{os}_{arch}.zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
