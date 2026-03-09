@@ -1,0 +1,68 @@
+# チームメンバーの issue / PR を検索してプロジェクトステータスを取得するクエリ
+#
+# GitHub Search API を使うことでサーバー側でアサイニー絞り込みができる。
+# ListProjectItems（全件スキャン）と違い、チーム指定時のみ使用する高速パス。
+#
+# 変数:
+#   $searchQuery: String! - 例: "org:Anti-Pattern-Inc assignee:alice assignee:bob is:open"
+#   $first: Int!          - 1ページあたりの取得件数（最大 100）
+#   $after: String        - ページネーション用カーソル
+
+query SearchTeamItems($searchQuery: String!, $first: Int!, $after: String) {
+  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on Issue {
+        number
+        title
+        url
+        assignees(first: 5) { nodes { login } }
+        labels(first: 10) { nodes { name } }
+        comments { totalCount }
+        projectItems(first: 10) {
+          nodes {
+            project { number }
+            fieldValues(first: 10) {
+              nodes {
+                ... on ProjectV2ItemFieldSingleSelectValue {
+                  name
+                  updatedAt
+                  field {
+                    ... on ProjectV2SingleSelectField { name }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      ... on PullRequest {
+        number
+        title
+        url
+        assignees(first: 5) { nodes { login } }
+        labels(first: 10) { nodes { name } }
+        comments { totalCount }
+        projectItems(first: 10) {
+          nodes {
+            project { number }
+            fieldValues(first: 10) {
+              nodes {
+                ... on ProjectV2ItemFieldSingleSelectValue {
+                  name
+                  updatedAt
+                  field {
+                    ... on ProjectV2SingleSelectField { name }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

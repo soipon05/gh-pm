@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 )
+
+//go:embed queries/team_items.graphql
+var teamItemsQuery string
 
 // cacheTTL はキャッシュの有効期間。
 // 同一セッション内で繰り返し実行しても API を叩き直さない。
@@ -280,6 +284,226 @@ func convertItem(node itemNode, statusFieldName string, now time.Time) *ProjectI
 		Status:          status,
 		Labels:          labels,
 		CommentCount:    content.Comments.TotalCount,
+		StatusChangedAt: statusChangedAt,
+		ElapsedDays:     elapsedDays,
+	}
+}
+
+// --- チーム高速パス（GitHub Search API ベース） ---
+
+// searchNode は GitHub Search API のレスポンスの1ノード。
+// Issue / PullRequest 共通フィールドを持つ。
+type searchNode struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Assignees struct {
+		Nodes []struct {
+			Login string `json:"login"`
+		} `json:"nodes"`
+	} `json:"assignees"`
+	Labels struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	} `json:"labels"`
+	Comments struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"comments"`
+	ProjectItems struct {
+		Nodes []struct {
+			Project struct {
+				Number int `json:"number"`
+			} `json:"project"`
+			FieldValues struct {
+				Nodes []fieldValueNode `json:"nodes"`
+			} `json:"fieldValues"`
+		} `json:"nodes"`
+	} `json:"projectItems"`
+}
+
+type searchResponse struct {
+	Search struct {
+		PageInfo pageInfo     `json:"pageInfo"`
+		Nodes    []searchNode `json:"nodes"`
+	} `json:"search"`
+}
+
+// teamCacheFilePath はチーム高速パス用のキャッシュファイルパスを返す。
+func teamCacheFilePath(owner string, projectNumber int, members []string) string {
+	key := fmt.Sprintf("gh-pm-%s-%d-team-%s.json", owner, projectNumber, strings.Join(members, "_"))
+	return filepath.Join(os.TempDir(), key)
+}
+
+func readTeamCache(path string) ([]ProjectItem, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var entry cacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return nil, false
+	}
+	if time.Since(entry.FetchedAt) > cacheTTL {
+		return nil, false
+	}
+	return entry.Items, true
+}
+
+func writeTeamCache(path string, items []ProjectItem) {
+	data, err := json.Marshal(cacheEntry{FetchedAt: time.Now(), Items: items})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0600)
+}
+
+// ListTeamItems はチームメンバーを GitHub Search で絞り込んで高速取得する。
+// チーム指定時の高速パス。ListProjectItems（全件スキャン）の代替として使用する。
+func (c *Client) ListTeamItems(owner string, projectNumber int, members []string, statusFieldName string) ([]ProjectItem, error) {
+	cachePath := teamCacheFilePath(owner, projectNumber, members)
+	if !c.noCache {
+		if cached, ok := readTeamCache(cachePath); ok {
+			return cached, nil
+		}
+	}
+
+	now := time.Now()
+	seen := map[int]bool{}
+	var allItems []ProjectItem
+
+	// "assignee:m1 assignee:m2 ..." は GitHub Search では OR 条件になる
+	assigneeFilter := ""
+	for _, m := range members {
+		assigneeFilter += "assignee:" + m + " "
+	}
+
+	// Open issues: In Progress / In Review / Done(プロジェクト上) だが GitHub 上は open のもの
+	openItems, err := c.searchProjectItems(
+		fmt.Sprintf("org:%s %sis:open", owner, assigneeFilter),
+		projectNumber, statusFieldName, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range openItems {
+		if !seen[item.Number] {
+			seen[item.Number] = true
+			allItems = append(allItems, item)
+		}
+	}
+
+	// Recently closed issues: done_last_7days の計算用に直近30日分を取得
+	since := now.AddDate(0, 0, -30).Format("2006-01-02")
+	closedItems, err := c.searchProjectItems(
+		fmt.Sprintf("org:%s %sis:closed updated:>%s", owner, assigneeFilter, since),
+		projectNumber, statusFieldName, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range closedItems {
+		if !seen[item.Number] {
+			seen[item.Number] = true
+			allItems = append(allItems, item)
+		}
+	}
+
+	if !c.noCache {
+		writeTeamCache(cachePath, allItems)
+	}
+	return allItems, nil
+}
+
+// searchProjectItems は1つの検索クエリを実行してプロジェクトアイテムを返す。
+func (c *Client) searchProjectItems(searchQuery string, projectNumber int, statusFieldName string, now time.Time) ([]ProjectItem, error) {
+	var allItems []ProjectItem
+	var cursor interface{}
+
+	for {
+		variables := map[string]interface{}{
+			"searchQuery": searchQuery,
+			"first":       itemsPerPage,
+			"after":       cursor,
+		}
+
+		var resp searchResponse
+		if err := c.gql.Do(teamItemsQuery, variables, &resp); err != nil {
+			return nil, fmt.Errorf("チームアイテムの検索に失敗しました: %w", err)
+		}
+
+		for _, node := range resp.Search.Nodes {
+			item := convertSearchNode(node, projectNumber, statusFieldName, now)
+			if item != nil {
+				allItems = append(allItems, *item)
+			}
+		}
+
+		if !resp.Search.PageInfo.HasNextPage {
+			break
+		}
+		cursor = resp.Search.PageInfo.EndCursor
+	}
+
+	return allItems, nil
+}
+
+// convertSearchNode は検索結果ノードを ProjectItem に変換する。
+// 指定プロジェクトに含まれないアイテムは nil を返してスキップする。
+func convertSearchNode(node searchNode, projectNumber int, statusFieldName string, now time.Time) *ProjectItem {
+	if node.Number == 0 {
+		return nil
+	}
+
+	// 指定プロジェクトの projectItem を探してステータスを取得
+	var status string
+	var statusChangedAt time.Time
+	found := false
+
+	for _, pi := range node.ProjectItems.Nodes {
+		if pi.Project.Number != projectNumber {
+			continue
+		}
+		found = true
+		for _, fv := range pi.FieldValues.Nodes {
+			if fv.Field != nil && fv.Field.Name == statusFieldName {
+				status = fv.Name
+				if fv.UpdatedAt != "" {
+					statusChangedAt, _ = time.Parse(time.RFC3339, fv.UpdatedAt)
+				}
+				break
+			}
+		}
+		break
+	}
+
+	if !found {
+		return nil // 指定プロジェクトに含まれないアイテムはスキップ
+	}
+
+	assignees := make([]string, 0, len(node.Assignees.Nodes))
+	for _, a := range node.Assignees.Nodes {
+		assignees = append(assignees, a.Login)
+	}
+
+	labels := make([]string, 0, len(node.Labels.Nodes))
+	for _, l := range node.Labels.Nodes {
+		labels = append(labels, l.Name)
+	}
+
+	var elapsedDays int
+	if !statusChangedAt.IsZero() {
+		elapsedDays = int(now.Sub(statusChangedAt).Hours() / 24)
+	}
+
+	return &ProjectItem{
+		Number:          node.Number,
+		Title:           node.Title,
+		URL:             node.URL,
+		Assignees:       assignees,
+		Status:          status,
+		Labels:          labels,
+		CommentCount:    node.Comments.TotalCount,
 		StatusChangedAt: statusChangedAt,
 		ElapsedDays:     elapsedDays,
 	}

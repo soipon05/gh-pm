@@ -49,28 +49,39 @@ func newReportCmd() *cobra.Command {
 
 // runReport はレポート表示の実際の処理。
 func runReport(cfg *config.Config, team string, flags *reportFlags) error {
-	// 1. GitHub API からアイテムを取得
 	client, err := gh.NewClient()
 	if err != nil {
 		return err
 	}
 
-	items, err := client.ListProjectItems(cfg.Project.Owner, cfg.Project.Number, cfg.Fields.Status.Name)
-	if err != nil {
-		return err
-	}
-
-	// 2. StatusCategory をマッピング（API 層は Status 名のみ返すので、ここでカテゴリに変換）
-	for i := range items {
-		items[i].StatusCategory = cfg.CategoryOf(items[i].Status)
-	}
-
-	// 3. チーム絞り込み
-	filtered := items
+	// チーム指定あり → GitHub Search ベースの高速パス
+	// チーム指定なし → 全件スキャン（遅いがキャッシュあり）
+	var items []gh.ProjectItem
 	if team != "" {
 		if _, ok := cfg.Teams[team]; !ok {
 			return fmt.Errorf("チーム %q が設定ファイルに見つかりません。\n  設定されているチーム: %s", team, teamNames(cfg))
 		}
+		items, err = client.ListTeamItems(
+			cfg.Project.Owner, cfg.Project.Number,
+			cfg.Teams[team].Members, cfg.Fields.Status.Name,
+		)
+	} else {
+		items, err = client.ListProjectItems(cfg.Project.Owner, cfg.Project.Number, cfg.Fields.Status.Name)
+	}
+	if err != nil {
+		return err
+	}
+
+	// StatusCategory をマッピング
+	for i := range items {
+		items[i].StatusCategory = cfg.CategoryOf(items[i].Status)
+	}
+
+	// チーム絞り込み（高速パスでは不要だが全件スキャン時は必要）
+	filtered := items
+	if team != "" && len(cfg.Teams[team].Members) > 0 {
+		// 高速パスは既にチームメンバーのアイテムのみ取得済みだが、
+		// 複数チームへのアサインによる重複を除去する
 		filtered = filterByTeam(items, cfg, team)
 	}
 
