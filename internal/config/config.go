@@ -18,6 +18,9 @@ type Config struct {
 	Fields  FieldsConfig         `yaml:"fields"`
 	Teams   map[string]TeamConfig `yaml:"teams"`
 	Alerts  AlertConfig          `yaml:"alerts"`
+
+	// memberTeamMap は TeamOf の O(1) ルックアップ用逆引きキャッシュ。YAML 非対象。
+	memberTeamMap map[string]string `yaml:"-"`
 }
 
 // ProjectConfig は .gpm.yml の `project:` セクション。
@@ -43,6 +46,7 @@ type StatusValuesConfig struct {
 	Todo       string `yaml:"todo"`
 	InProgress string `yaml:"in_progress"`
 	InReview   string `yaml:"in_review"`
+	Staging    string `yaml:"staging,omitempty"`
 	Done       string `yaml:"done"`
 	Blocked    string `yaml:"blocked,omitempty"`
 }
@@ -212,7 +216,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// CategoryOf は Status 値からカテゴリ名（todo, in_progress, in_review, done, blocked）を返す。
+// CategoryOf は Status 値からカテゴリ名（todo, in_progress, in_review, staging, done, blocked）を返す。
 // 該当しない場合は空文字を返す。
 func (c *Config) CategoryOf(statusName string) string {
 	if statusName == "" {
@@ -227,6 +231,10 @@ func (c *Config) CategoryOf(statusName string) string {
 		return "in_progress"
 	case v.InReview:
 		return "in_review"
+	case v.Staging:
+		if v.Staging != "" {
+			return "staging"
+		}
 	case v.Done:
 		return "done"
 	case v.Blocked:
@@ -238,14 +246,15 @@ func (c *Config) CategoryOf(statusName string) string {
 }
 
 // TeamOf は GitHub ID からチーム名を返す。
-// 該当するチームがなければ空文字を返す。
+// 初回呼び出し時に逆引きマップを構築し、以降は O(1) で返す。
 func (c *Config) TeamOf(githubID string) string {
-	for teamName, team := range c.Teams {
-		for _, member := range team.Members {
-			if member == githubID {
-				return teamName
+	if c.memberTeamMap == nil {
+		c.memberTeamMap = make(map[string]string)
+		for teamName, team := range c.Teams {
+			for _, member := range team.Members {
+				c.memberTeamMap[member] = teamName
 			}
 		}
 	}
-	return ""
+	return c.memberTeamMap[githubID]
 }

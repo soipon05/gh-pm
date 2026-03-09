@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -330,8 +332,12 @@ type searchResponse struct {
 }
 
 // teamCacheFilePath はチーム高速パス用のキャッシュファイルパスを返す。
+// members をソートしてキーを生成するため、渡す順序に依存しない。
 func teamCacheFilePath(owner string, projectNumber int, members []string) string {
-	key := fmt.Sprintf("gh-pm-%s-%d-team-%s.json", owner, projectNumber, strings.Join(members, "_"))
+	sorted := make([]string, len(members))
+	copy(sorted, members)
+	sort.Strings(sorted)
+	key := fmt.Sprintf("gh-pm-%s-%d-team-%s.json", owner, projectNumber, strings.Join(sorted, "_"))
 	return filepath.Join(os.TempDir(), key)
 }
 
@@ -369,8 +375,6 @@ func (c *Client) ListTeamItems(owner string, projectNumber int, members []string
 	}
 
 	now := time.Now()
-	seen := map[int]bool{}
-	var allItems []ProjectItem
 
 	// "assignee:m1 assignee:m2 ..." は GitHub Search では OR 条件になる
 	assigneeFilter := ""
@@ -378,35 +382,47 @@ func (c *Client) ListTeamItems(owner string, projectNumber int, members []string
 		assigneeFilter += "assignee:" + m + " "
 	}
 
-	// Open issues: In Progress / In Review / Done(プロジェクト上) だが GitHub 上は open のもの
-	openItems, err := c.searchProjectItems(
-		fmt.Sprintf("org:%s %sis:open", owner, assigneeFilter),
-		projectNumber, statusFieldName, now,
-	)
-	if err != nil {
-		return nil, err
+	// Open と Recently Closed を並列取得
+	type searchResult struct {
+		items []ProjectItem
+		err   error
 	}
-	for _, item := range openItems {
-		if !seen[item.Number] {
-			seen[item.Number] = true
-			allItems = append(allItems, item)
-		}
-	}
+	ch := make(chan searchResult, 2)
 
-	// Recently closed issues: done_last_7days の計算用に直近30日分を取得
+	go func() {
+		items, err := c.searchProjectItems(
+			fmt.Sprintf("org:%s %sis:open", owner, assigneeFilter),
+			projectNumber, statusFieldName, now,
+		)
+		ch <- searchResult{items, err}
+	}()
+
 	since := now.AddDate(0, 0, -30).Format("2006-01-02")
-	closedItems, err := c.searchProjectItems(
-		fmt.Sprintf("org:%s %sis:closed updated:>%s", owner, assigneeFilter, since),
-		projectNumber, statusFieldName, now,
-	)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range closedItems {
-		if !seen[item.Number] {
-			seen[item.Number] = true
-			allItems = append(allItems, item)
+	go func() {
+		items, err := c.searchProjectItems(
+			fmt.Sprintf("org:%s %sis:closed updated:>%s", owner, assigneeFilter, since),
+			projectNumber, statusFieldName, now,
+		)
+		ch <- searchResult{items, err}
+	}()
+
+	seen := map[int]bool{}
+	var allItems []ProjectItem
+	var mu sync.Mutex
+
+	for i := 0; i < 2; i++ {
+		r := <-ch
+		if r.err != nil {
+			return nil, r.err
 		}
+		mu.Lock()
+		for _, item := range r.items {
+			if !seen[item.Number] {
+				seen[item.Number] = true
+				allItems = append(allItems, item)
+			}
+		}
+		mu.Unlock()
 	}
 
 	if !c.noCache {

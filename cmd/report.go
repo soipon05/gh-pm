@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/soipon05/gh-pm/internal/analytics"
 	"github.com/soipon05/gh-pm/internal/config"
@@ -142,32 +144,36 @@ func renderTable(cfg *config.Config, allItems, filtered []gh.ProjectItem, team s
 }
 
 // groupAllTeams は全アイテムをチームごとに集計する。
+// チーム名をソートして出力順序を固定する。
 func groupAllTeams(items []gh.ProjectItem, cfg *config.Config, alertLevels map[int]string) []render.TeamSummary {
+	seen := map[int]bool{}
 	teamItems := map[string][]gh.ProjectItem{}
 
 	for _, item := range items {
+		if seen[item.Number] {
+			continue
+		}
 		for _, assignee := range item.Assignees {
 			teamName := cfg.TeamOf(assignee)
 			if teamName != "" {
-				teamItems[teamName] = append(teamItems[teamName], item)
-			}
-		}
-	}
-
-	// 重複除去（同じアイテムが複数メンバーにアサインされている場合）
-	var teams []render.TeamSummary
-	for name := range cfg.Teams {
-		seen := map[int]bool{}
-		var unique []gh.ProjectItem
-		for _, item := range teamItems[name] {
-			if !seen[item.Number] {
 				seen[item.Number] = true
-				unique = append(unique, item)
+				teamItems[teamName] = append(teamItems[teamName], item)
+				break // 同じアイテムを複数チームに重複登録しない
 			}
 		}
-		teams = append(teams, buildTeamSummary(name, unique, alertLevels))
 	}
 
+	// チーム名をソートして出力順序を固定
+	names := make([]string, 0, len(cfg.Teams))
+	for name := range cfg.Teams {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	teams := make([]render.TeamSummary, 0, len(names))
+	for _, name := range names {
+		teams = append(teams, buildTeamSummary(name, teamItems[name], alertLevels))
+	}
 	return teams
 }
 
@@ -253,11 +259,18 @@ func buildAlertLevels(diag *analytics.Diagnostics) map[int]string {
 }
 
 // allUniqueMembers は全チームのメンバーを重複なく返す。
+// チーム名をソートして反復することでキャッシュキーが毎回同じになる。
 func allUniqueMembers(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.Teams))
+	for name := range cfg.Teams {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	seen := map[string]bool{}
 	var members []string
-	for _, team := range cfg.Teams {
-		for _, m := range team.Members {
+	for _, name := range names {
+		for _, m := range cfg.Teams[name].Members {
 			if !seen[m] {
 				seen[m] = true
 				members = append(members, m)
@@ -267,21 +280,15 @@ func allUniqueMembers(cfg *config.Config) []string {
 	return members
 }
 
-// teamNames は設定されているチーム名を ", " 区切りで返す。
+// teamNames は設定されているチーム名をソートして ", " 区切りで返す。
 func teamNames(cfg *config.Config) string {
+	if len(cfg.Teams) == 0 {
+		return "(なし)"
+	}
 	names := make([]string, 0, len(cfg.Teams))
 	for name := range cfg.Teams {
 		names = append(names, name)
 	}
-	if len(names) == 0 {
-		return "(なし)"
-	}
-	result := ""
-	for i, n := range names {
-		if i > 0 {
-			result += ", "
-		}
-		result += n
-	}
-	return result
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }

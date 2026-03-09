@@ -28,11 +28,21 @@ type ReviewCyclesResult struct {
 func ComputeReviewCycles(items []gh.ProjectItem, mapper StatusMapper) *ReviewCyclesResult {
 	var entries []ReviewCycleEntry
 
+	catCache := map[string]string{}
+	cached := func(s string) string {
+		if c, ok := catCache[s]; ok {
+			return c
+		}
+		c := mapper(s)
+		catCache[s] = c
+		return c
+	}
+
 	for _, item := range items {
 		bounces := 0
 		for _, t := range item.Transitions {
-			fromCat := mapper(t.From)
-			toCat := mapper(t.To)
+			fromCat := cached(t.From)
+			toCat := cached(t.To)
 			// In Review → In Progress への逆流を検出
 			if fromCat == "in_review" && toCat == "in_progress" {
 				bounces++
