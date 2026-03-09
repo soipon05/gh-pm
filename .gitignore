@@ -15,3 +15,6 @@ coverage.txt
 
 # OS
 .DS_Store
+
+# ローカルメモ（個人用・git管理外）
+*.local.md
