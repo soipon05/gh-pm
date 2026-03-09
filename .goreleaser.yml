@@ -21,17 +21,11 @@ builds:
       - -s -w
 
 archives:
-  - # gh extension install が認識する命名規則:
-    # macOS/Linux: {name}_{os}_{arch}.tar.gz
-    # Windows:     {name}_{os}_{arch}.zip
-    format: tar.gz
-    # gh extension install が認識する命名規則: ハイフン区切り
+  - # gh extension install は strings.HasSuffix でアセット名をチェックする
+    # → アーカイブ不可。生バイナリ名が "{name}-{os}-{arch}" で終わる必要がある
+    # Windows のみ ".exe" 付きで別途対応
+    format: binary
     name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - none*
 
 checksum:
   name_template: "checksums.txt"
