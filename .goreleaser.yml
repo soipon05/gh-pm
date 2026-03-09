@@ -25,7 +25,8 @@ archives:
     # macOS/Linux: {name}_{os}_{arch}.tar.gz
     # Windows:     {name}_{os}_{arch}.zip
     format: tar.gz
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    # gh extension install が認識する命名規則: ハイフン区切り
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
     format_overrides:
       - goos: windows
         format: zip
