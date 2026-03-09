@@ -18,7 +18,7 @@ var teamItemsQuery string
 
 // cacheTTL はキャッシュの有効期間。
 // 同一セッション内で繰り返し実行しても API を叩き直さない。
-const cacheTTL = 5 * time.Minute
+const cacheTTL = 30 * time.Minute
 
 type cacheEntry struct {
 	FetchedAt time.Time     `json:"fetched_at"`

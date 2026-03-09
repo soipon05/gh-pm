@@ -54,8 +54,9 @@ func runReport(cfg *config.Config, team string, flags *reportFlags) error {
 		return err
 	}
 
-	// チーム指定あり → GitHub Search ベースの高速パス
-	// チーム指定なし → 全件スキャン（遅いがキャッシュあり）
+	// チーム指定あり → 対象チームメンバーの Search API 高速パス
+	// チーム指定なし＋チーム設定あり → 全チームメンバーをまとめて Search API 高速パス
+	// チーム設定なし → 全件スキャン（フォールバック）
 	var items []gh.ProjectItem
 	if team != "" {
 		if _, ok := cfg.Teams[team]; !ok {
@@ -64,6 +65,11 @@ func runReport(cfg *config.Config, team string, flags *reportFlags) error {
 		items, err = client.ListTeamItems(
 			cfg.Project.Owner, cfg.Project.Number,
 			cfg.Teams[team].Members, cfg.Fields.Status.Name,
+		)
+	} else if members := allUniqueMembers(cfg); len(members) > 0 {
+		items, err = client.ListTeamItems(
+			cfg.Project.Owner, cfg.Project.Number,
+			members, cfg.Fields.Status.Name,
 		)
 	} else {
 		items, err = client.ListProjectItems(cfg.Project.Owner, cfg.Project.Number, cfg.Fields.Status.Name)
@@ -244,6 +250,21 @@ func buildAlertLevels(diag *analytics.Diagnostics) map[int]string {
 	}
 
 	return levels
+}
+
+// allUniqueMembers は全チームのメンバーを重複なく返す。
+func allUniqueMembers(cfg *config.Config) []string {
+	seen := map[string]bool{}
+	var members []string
+	for _, team := range cfg.Teams {
+		for _, m := range team.Members {
+			if !seen[m] {
+				seen[m] = true
+				members = append(members, m)
+			}
+		}
+	}
+	return members
 }
 
 // teamNames は設定されているチーム名を ", " 区切りで返す。
