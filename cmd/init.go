@@ -250,21 +250,45 @@ func selectProject() (owner string, number int, err error) {
 		return
 	}
 
-	// Organization から選択
-	if err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Organization 名").
-				Value(&owner).
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("Organization 名を入力してください")
-					}
-					return nil
-				}),
-		),
-	).WithTheme(huh.ThemeCharm()).Run(); err != nil {
-		return
+	// Organization をドロップダウンで選択
+	fmt.Print(dimStyle.Render("Organization 一覧を取得中..."))
+	orgs, orgErr := fetchUserOrgs()
+	fmt.Println()
+	if orgErr != nil || len(orgs) == 0 {
+		// フェッチ失敗時はテキスト入力にフォールバック
+		if err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Organization 名").
+					Value(&owner).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("Organization 名を入力してください")
+						}
+						return nil
+					}),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
+			return
+		}
+	} else if len(orgs) == 1 {
+		owner = orgs[0]
+		fmt.Printf("%s %s\n\n", dimStyle.Render("Organization:"), lipgloss.NewStyle().Bold(true).Render(owner))
+	} else {
+		orgOpts := make([]huh.Option[string], len(orgs))
+		for i, o := range orgs {
+			orgOpts[i] = huh.NewOption(o, o)
+		}
+		if err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Organization を選択").
+					Options(orgOpts...).
+					Value(&owner),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
+			return
+		}
 	}
 
 	var projects []projectInfo
@@ -613,6 +637,25 @@ func parseProjectURL(rawURL string) (string, int, error) {
 		return "", 0, fmt.Errorf("Organization 名またはプロジェクト番号を検出できません\n  形式: https://github.com/orgs/ORG/projects/N")
 	}
 	return org, num, nil
+}
+
+// fetchUserOrgs は認証済みユーザーが所属する Organization の一覧を返す。
+func fetchUserOrgs() ([]string, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return nil, err
+	}
+	var orgs []struct {
+		Login string `json:"login"`
+	}
+	if err := client.Get("user/orgs?per_page=100", &orgs); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(orgs))
+	for i, o := range orgs {
+		names[i] = o.Login
+	}
+	return names, nil
 }
 
 // fetchCurrentUser は認証済み GitHub ユーザーのログイン名を返す。
