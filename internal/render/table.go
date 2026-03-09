@@ -8,7 +8,19 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 )
+
+// padRight はターミナル表示幅を考慮して右をスペースで埋める。
+// Go 標準の %-Ns は日本語などの全角文字を1幅と誤カウントするため、
+// runewidth.StringWidth で実際の表示幅を計算して補正する。
+func padRight(s string, width int) string {
+	displayWidth := runewidth.StringWidth(s)
+	if displayWidth >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-displayWidth)
+}
 
 // TeamSummary は1チームの進捗集計結果。
 type TeamSummary struct {
@@ -40,13 +52,13 @@ func PrintSummaryTable(teams []TeamSummary, noColor bool) {
 	fmt.Printf("=== プロジェクト進捗 (%s) ===\n\n", now.Format("2006-01-02"))
 
 	// ヘッダー
-	fmt.Printf("%-12s  %5s  %12s  %10s  %8s\n", "チーム", "Todo", "In Progress", "In Review", "Done(7d)")
+	fmt.Printf("%s  %5s  %12s  %10s  %8s\n", padRight("チーム", 12), "Todo", "In Progress", "In Review", "Done(7d)")
 	fmt.Println("──────────────────────────────────────────────────")
 
 	totalTodo, totalIP, totalIR, totalDone := 0, 0, 0, 0
 	for _, t := range teams {
-		fmt.Printf("%-12s  %5d  %12d  %10d  %8d\n",
-			t.Name, len(t.Todo), len(t.InProgress), len(t.InReview), len(t.Done))
+		fmt.Printf("%s  %5d  %12d  %10d  %8d\n",
+			padRight(t.Name, 12), len(t.Todo), len(t.InProgress), len(t.InReview), len(t.Done))
 		totalTodo += len(t.Todo)
 		totalIP += len(t.InProgress)
 		totalIR += len(t.InReview)
@@ -54,7 +66,7 @@ func PrintSummaryTable(teams []TeamSummary, noColor bool) {
 	}
 
 	fmt.Println()
-	fmt.Printf("%-12s  %5d  %12d  %10d  %8d\n", "合計:", totalTodo, totalIP, totalIR, totalDone)
+	fmt.Printf("%s  %5d  %12d  %10d  %8d\n", padRight("合計:", 12), totalTodo, totalIP, totalIR, totalDone)
 }
 
 // PrintTeamDetail は1チームの詳細をターミナルに出力する。
