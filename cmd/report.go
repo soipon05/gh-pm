@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/soipon05/gh-pm/internal/analytics"
 	"github.com/soipon05/gh-pm/internal/config"
@@ -16,6 +18,7 @@ import (
 type reportFlags struct {
 	format  string // "table" | "json" | "csv"
 	noColor bool   // カラー出力を無効化するか
+	refresh bool   // キャッシュを無視して最新データを取得
 }
 
 func newReportCmd() *cobra.Command {
@@ -45,39 +48,62 @@ func newReportCmd() *cobra.Command {
 	// フラグの登録
 	cmd.Flags().StringVar(&flags.format, "format", "table", "出力形式: table|json|csv")
 	cmd.Flags().BoolVar(&flags.noColor, "no-color", false, "カラー出力を無効化する")
+	cmd.Flags().BoolVar(&flags.refresh, "refresh", false, "キャッシュを無視して最新データを取得")
 
 	return cmd
 }
 
 // runReport はレポート表示の実際の処理。
 func runReport(cfg *config.Config, team string, flags *reportFlags) error {
-	client, err := gh.NewClient()
+	var (
+		client *gh.Client
+		err    error
+	)
+	if flags.refresh {
+		client, err = gh.NewClientWithRefresh()
+	} else {
+		client, err = gh.NewClient()
+	}
 	if err != nil {
 		return err
 	}
+
+	// 即時フィードバック（フリーズ感を防ぐ）
+	fmt.Fprint(os.Stderr, "取得中...")
 
 	// チーム指定あり → 対象チームメンバーの Search API 高速パス
 	// チーム指定なし＋チーム設定あり → 全チームメンバーをまとめて Search API 高速パス
 	// チーム設定なし → 全件スキャン（フォールバック）
 	var items []gh.ProjectItem
+	var cacheAge time.Duration
 	if team != "" {
 		if _, ok := cfg.Teams[team]; !ok {
+			fmt.Fprintln(os.Stderr)
 			return fmt.Errorf("チーム %q が設定ファイルに見つかりません。\n  設定されているチーム: %s", team, teamNames(cfg))
 		}
-		items, err = client.ListTeamItems(
+		items, cacheAge, err = client.ListTeamItems(
 			cfg.Project.Owner, cfg.Project.Number,
 			cfg.Teams[team].Members, cfg.Fields.Status.Name,
 		)
 	} else if members := allUniqueMembers(cfg); len(members) > 0 {
-		items, err = client.ListTeamItems(
+		items, cacheAge, err = client.ListTeamItems(
 			cfg.Project.Owner, cfg.Project.Number,
 			members, cfg.Fields.Status.Name,
 		)
 	} else {
 		items, err = client.ListProjectItems(cfg.Project.Owner, cfg.Project.Number, cfg.Fields.Status.Name)
 	}
+
+	// 取得完了 or エラー
 	if err != nil {
+		fmt.Fprintln(os.Stderr)
 		return err
+	}
+	fmt.Fprintln(os.Stderr, " 完了")
+
+	// キャッシュが古い場合は通知
+	if cacheAge > 15*time.Minute {
+		fmt.Fprintf(os.Stderr, "（%d分前のキャッシュ。最新化: gh pm report --refresh）\n", int(cacheAge.Minutes()))
 	}
 
 	// StatusCategory をマッピング

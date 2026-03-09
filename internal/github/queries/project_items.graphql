@@ -40,11 +40,6 @@ query GetProjectItems($owner: String!, $number: Int!, $first: Int!, $after: Stri
               number
               title
               url
-              labels(first: 10) {
-                nodes {
-                  name
-                }
-              }
               comments {
                 totalCount
               }
@@ -58,11 +53,6 @@ query GetProjectItems($owner: String!, $number: Int!, $first: Int!, $after: Stri
               number
               title
               url
-              labels(first: 10) {
-                nodes {
-                  name
-                }
-              }
               comments {
                 totalCount
               }

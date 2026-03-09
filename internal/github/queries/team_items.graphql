@@ -20,7 +20,6 @@ query SearchTeamItems($searchQuery: String!, $first: Int!, $after: String) {
         title
         url
         assignees(first: 5) { nodes { login } }
-        labels(first: 10) { nodes { name } }
         comments { totalCount }
         projectItems(first: 10) {
           nodes {
@@ -44,7 +43,6 @@ query SearchTeamItems($searchQuery: String!, $first: Int!, $after: String) {
         title
         url
         assignees(first: 5) { nodes { login } }
-        labels(first: 10) { nodes { name } }
         comments { totalCount }
         projectItems(first: 10) {
           nodes {

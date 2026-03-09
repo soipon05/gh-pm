@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -18,40 +17,85 @@ import (
 //go:embed queries/team_items.graphql
 var teamItemsQuery string
 
-// cacheTTL はキャッシュの有効期間。
-// 同一セッション内で繰り返し実行しても API を叩き直さない。
-const cacheTTL = 30 * time.Minute
+// キャッシュ TTL 定義
+const (
+	// openCacheTTL: In Progress/Review/Todo など「今動いているデータ」の鮮度閾値。
+	// これを超えると stale 扱いになるが、staleCutoff 以内なら即時表示。
+	openCacheTTL = 15 * time.Minute
+
+	// doneCacheTTL: 完了アイテムは変化が少ないので長めにキャッシュする。
+	doneCacheTTL = 24 * time.Hour
+
+	// staleCutoff: これを超えた古いキャッシュは信頼できないので再取得する。
+	staleCutoff = 24 * time.Hour
+)
 
 type cacheEntry struct {
 	FetchedAt time.Time     `json:"fetched_at"`
 	Items     []ProjectItem `json:"items"`
 }
 
+// --- 汎用キャッシュ読み書き ---
+
+func readCacheEntry(path string) (items []ProjectItem, age time.Duration, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, false
+	}
+	var entry cacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return nil, 0, false
+	}
+	age = time.Since(entry.FetchedAt)
+	if age > staleCutoff {
+		return nil, 0, false // 古すぎて使えない
+	}
+	return entry.Items, age, true
+}
+
+func writeCacheEntry(path string, items []ProjectItem) {
+	data, err := json.Marshal(cacheEntry{FetchedAt: time.Now(), Items: items})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0600)
+}
+
+// --- ListProjectItems 用キャッシュ（全件スキャン兼用） ---
+
 func cacheFilePath(owner string, projectNumber int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("gh-pm-%s-%d.json", owner, projectNumber))
 }
 
 func readCache(owner string, projectNumber int) ([]ProjectItem, bool) {
-	data, err := os.ReadFile(cacheFilePath(owner, projectNumber))
-	if err != nil {
+	items, age, ok := readCacheEntry(cacheFilePath(owner, projectNumber))
+	if !ok {
 		return nil, false
 	}
-	var entry cacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, false
-	}
-	if time.Since(entry.FetchedAt) > cacheTTL {
-		return nil, false
-	}
-	return entry.Items, true
+	return items, age <= openCacheTTL
 }
 
 func writeCache(owner string, projectNumber int, items []ProjectItem) {
-	data, err := json.Marshal(cacheEntry{FetchedAt: time.Now(), Items: items})
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(cacheFilePath(owner, projectNumber), data, 0600)
+	writeCacheEntry(cacheFilePath(owner, projectNumber), items)
+}
+
+// --- チーム高速パス用 分割キャッシュ ---
+
+func sortedJoin(members []string) string {
+	sorted := make([]string, len(members))
+	copy(sorted, members)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "_")
+}
+
+func openCacheFilePath(owner string, projectNumber int, members []string) string {
+	return filepath.Join(os.TempDir(),
+		fmt.Sprintf("gh-pm-%s-%d-open-%s.json", owner, projectNumber, sortedJoin(members)))
+}
+
+func doneCacheFilePath(owner string, projectNumber int, members []string) string {
+	return filepath.Join(os.TempDir(),
+		fmt.Sprintf("gh-pm-%s-%d-done-%s.json", owner, projectNumber, sortedJoin(members)))
 }
 
 //go:embed queries/project_items.graphql
@@ -161,20 +205,28 @@ type ProjectItem struct {
 // Client は GitHub Projects API のラッパー。
 // go-gh の GraphQL クライアントをラップして、このツール向けの型で返す。
 type Client struct {
-	gql     gqlClient
-	noCache bool // テスト時は true にしてキャッシュをバイパスする
+	gql        gqlClient
+	noCache    bool // テスト時は true にしてキャッシュ読み書きをバイパスする
+	skipCache  bool // --refresh 時は true にしてキャッシュ読み込みをスキップする（書き込みはする）
 }
 
 // NewClient は go-gh の認証情報を使って Client を生成する。
-//
-// gh auth login が完了していれば、トークンは自動で取得される。
-// ユーザーがトークンを意識しなくてよいのは go-gh のおかげ。
 func NewClient() (*Client, error) {
 	client, err := api.DefaultGraphQLClient()
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API クライアントの作成に失敗しました: %w", err)
 	}
 	return &Client{gql: client}, nil
+}
+
+// NewClientWithRefresh はキャッシュを無視して常に新鮮なデータを取得する Client を返す。
+// 取得後はキャッシュに書き込むので、次回実行は高速になる。
+func NewClientWithRefresh() (*Client, error) {
+	client, err := api.DefaultGraphQLClient()
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API クライアントの作成に失敗しました: %w", err)
+	}
+	return &Client{gql: client, skipCache: true}, nil
 }
 
 // newTestClient はテスト用の Client を生成する。モック GQL クライアントを注入できる。
@@ -194,7 +246,7 @@ const itemsPerPage = 100
 //
 // 注意: StatusCategory は設定されない。呼び出し元が config.CategoryOf() で設定すること。
 func (c *Client) ListProjectItems(owner string, projectNumber int, statusFieldName string) ([]ProjectItem, error) {
-	if !c.noCache {
+	if !c.noCache && !c.skipCache {
 		if cached, ok := readCache(owner, projectNumber); ok {
 			return cached, nil
 		}
@@ -331,104 +383,113 @@ type searchResponse struct {
 	} `json:"search"`
 }
 
-// teamCacheFilePath はチーム高速パス用のキャッシュファイルパスを返す。
-// members をソートしてキーを生成するため、渡す順序に依存しない。
-func teamCacheFilePath(owner string, projectNumber int, members []string) string {
-	sorted := make([]string, len(members))
-	copy(sorted, members)
-	sort.Strings(sorted)
-	key := fmt.Sprintf("gh-pm-%s-%d-team-%s.json", owner, projectNumber, strings.Join(sorted, "_"))
-	return filepath.Join(os.TempDir(), key)
-}
-
-func readTeamCache(path string) ([]ProjectItem, bool) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, false
-	}
-	var entry cacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, false
-	}
-	if time.Since(entry.FetchedAt) > cacheTTL {
-		return nil, false
-	}
-	return entry.Items, true
-}
-
-func writeTeamCache(path string, items []ProjectItem) {
-	data, err := json.Marshal(cacheEntry{FetchedAt: time.Now(), Items: items})
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0600)
-}
-
 // ListTeamItems はチームメンバーを GitHub Search で絞り込んで高速取得する。
-// チーム指定時の高速パス。ListProjectItems（全件スキャン）の代替として使用する。
-func (c *Client) ListTeamItems(owner string, projectNumber int, members []string, statusFieldName string) ([]ProjectItem, error) {
-	cachePath := teamCacheFilePath(owner, projectNumber, members)
-	if !c.noCache {
-		if cached, ok := readTeamCache(cachePath); ok {
-			return cached, nil
+//
+// キャッシュ戦略（Stale-While-Revalidate）:
+//   - open アイテム（15分TTL）と done アイテム（24時間TTL）を別ファイルにキャッシュ
+//   - キャッシュが存在する限り（24時間以内）即座に返す
+//   - cacheAge > 0 なら呼び出し元が「古いデータです」と表示できる
+//   - --refresh 時は skipCache=true で強制再取得
+//
+// 戻り値の cacheAge:
+//   - 0 = 今回新しくフェッチしたデータ
+//   - > 0 = キャッシュのデータ（値はデータの古さ）
+func (c *Client) ListTeamItems(owner string, projectNumber int, members []string, statusFieldName string) (items []ProjectItem, cacheAge time.Duration, err error) {
+	openPath := openCacheFilePath(owner, projectNumber, members)
+	donePath := doneCacheFilePath(owner, projectNumber, members)
+
+	var openItems, doneItems []ProjectItem
+	var openAge, doneAge time.Duration
+	needOpen, needDone := true, true
+
+	// キャッシュ読み込み（skipCache/noCache 時はスキップ）
+	if !c.noCache && !c.skipCache {
+		if cached, age, ok := readCacheEntry(openPath); ok {
+			openItems, openAge, needOpen = cached, age, false
+		}
+		if cached, age, ok := readCacheEntry(donePath); ok {
+			doneItems, doneAge, needDone = cached, age, false
 		}
 	}
 
 	now := time.Now()
-
-	// "assignee:m1 assignee:m2 ..." は GitHub Search では OR 条件になる
 	assigneeFilter := ""
 	for _, m := range members {
 		assigneeFilter += "assignee:" + m + " "
 	}
 
-	// Open と Recently Closed を並列取得
-	type searchResult struct {
-		items []ProjectItem
-		err   error
+	// 不足分だけ並列フェッチ
+	type fetchResult struct {
+		items  []ProjectItem
+		isDone bool
+		err    error
 	}
-	ch := make(chan searchResult, 2)
+	ch := make(chan fetchResult, 2)
+	pending := 0
 
-	go func() {
-		items, err := c.searchProjectItems(
-			fmt.Sprintf("org:%s %sis:open", owner, assigneeFilter),
-			projectNumber, statusFieldName, now,
-		)
-		ch <- searchResult{items, err}
-	}()
+	if needOpen {
+		pending++
+		go func() {
+			fetched, e := c.searchProjectItems(
+				fmt.Sprintf("org:%s %sis:open", owner, assigneeFilter),
+				projectNumber, statusFieldName, now,
+			)
+			ch <- fetchResult{fetched, false, e}
+		}()
+	}
 
-	since := now.AddDate(0, 0, -30).Format("2006-01-02")
-	go func() {
-		items, err := c.searchProjectItems(
-			fmt.Sprintf("org:%s %sis:closed updated:>%s", owner, assigneeFilter, since),
-			projectNumber, statusFieldName, now,
-		)
-		ch <- searchResult{items, err}
-	}()
+	if needDone {
+		pending++
+		since := now.AddDate(0, 0, -7).Format("2006-01-02") // 30日→7日に短縮
+		go func() {
+			fetched, e := c.searchProjectItems(
+				fmt.Sprintf("org:%s %sis:closed updated:>%s", owner, assigneeFilter, since),
+				projectNumber, statusFieldName, now,
+			)
+			ch <- fetchResult{fetched, true, e}
+		}()
+	}
 
-	seen := map[int]bool{}
-	var allItems []ProjectItem
-	var mu sync.Mutex
-
-	for i := 0; i < 2; i++ {
+	for i := 0; i < pending; i++ {
 		r := <-ch
 		if r.err != nil {
-			return nil, r.err
+			return nil, 0, r.err
 		}
-		mu.Lock()
-		for _, item := range r.items {
-			if !seen[item.Number] {
-				seen[item.Number] = true
-				allItems = append(allItems, item)
+		if r.isDone {
+			doneItems = r.items
+			doneAge = 0
+			if !c.noCache {
+				writeCacheEntry(donePath, r.items)
+			}
+		} else {
+			openItems = r.items
+			openAge = 0
+			if !c.noCache {
+				writeCacheEntry(openPath, r.items)
 			}
 		}
-		mu.Unlock()
 	}
 
-	if !c.noCache {
-		writeTeamCache(cachePath, allItems)
+	// マージ（重複除去）
+	seen := map[int]bool{}
+	var allItems []ProjectItem
+	for _, item := range openItems {
+		if !seen[item.Number] {
+			seen[item.Number] = true
+			allItems = append(allItems, item)
+		}
 	}
-	return allItems, nil
+	for _, item := range doneItems {
+		if !seen[item.Number] {
+			seen[item.Number] = true
+			allItems = append(allItems, item)
+		}
+	}
+
+	// open の鮮度を cacheAge として返す（最も重要なデータ）
+	cacheAge = openAge
+	_ = doneAge // done は長期キャッシュなので報告しない
+	return allItems, cacheAge, nil
 }
 
 // searchProjectItems は1つの検索クエリを実行してプロジェクトアイテムを返す。

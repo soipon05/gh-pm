@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cli/go-gh/v2/pkg/api"
+	gh "github.com/soipon05/gh-pm/internal/github"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -503,6 +504,44 @@ func writeConfig(owner string, number int, statusField string, mapping map[strin
 
 	fmt.Println()
 	fmt.Println(successStyle.Render("✓ .gpm.yml を生成しました！"))
+
+	// キャッシュ先焼き（初回 gh pm report を即時表示にする）
+	if len(teams) > 0 {
+		var prewarm bool
+		prewarmDefault := true
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("プロジェクトデータを今すぐ取得しますか？").
+					Description("次回 gh pm report が即時表示されます（約4秒）").
+					Value(&prewarmDefault),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err == nil {
+			prewarm = prewarmDefault
+		}
+		if prewarm {
+			fmt.Print(dimStyle.Render("データを取得中..."))
+			client, apiErr := gh.NewClient()
+			if apiErr == nil {
+				allMembers := make([]string, 0)
+				seen := map[string]bool{}
+				for _, members := range teams {
+					for _, m := range members {
+						if !seen[m] {
+							seen[m] = true
+							allMembers = append(allMembers, m)
+						}
+					}
+				}
+				statusFieldName := "Status" // init で確認済みのフィールド名
+				_, _, _ = client.ListTeamItems(owner, number, allMembers, statusFieldName)
+				fmt.Println(" " + successStyle.Render("✓"))
+			} else {
+				fmt.Println(" " + dimStyle.Render("スキップ"))
+			}
+		}
+	}
+
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Render("次のステップ"))
 	fmt.Println(dimStyle.Render("  gh pm report        ") + "全チームの進捗を表示")
