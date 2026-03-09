@@ -5,38 +5,62 @@ import (
 	"os"
 	"strings"
 
-	survey "github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+)
+
+// --- スタイル定義 ---
+
+var (
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("99")). // purple
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("99")).
+			Padding(0, 2)
+
+	successStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("42")) // green
+
+	dimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")) // gray
+
+	yamlKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("81")) // cyan
+
+	yamlValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")) // white
+
+	categoryColors = map[string]lipgloss.Style{
+		"in_progress": lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")), // yellow
+		"in_review":   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")),  // blue
+		"todo":        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252")), // light gray
+		"done":        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")),  // green
+		"blocked":     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")), // red
+	}
 )
 
 func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "初回セットアップウィザードを実行する",
-		Long: `対話形式で .gpm.yml を生成する。
-
-フロー:
-  1. プロジェクトの指定方法を選択（URL 貼り付け or Organization から選択）
-  2. Status フィールドを API で自動検出し、カテゴリにマッピング
-  3. チーム定義（メンバーをチェックボックスで選択）
-  4. .gpm.yml を生成`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit()
 		},
 	}
-
 	return cmd
 }
 
-// --- .gpm.yml の出力型 ---
-// map[string]interface{} ではなく struct を使うことで YAML キーの順序を制御する。
+// --- .gpm.yml 出力型 ---
 
 type gpmConfig struct {
-	Project gpmProject            `yaml:"project"`
-	Fields  gpmFields             `yaml:"fields"`
-	Teams   map[string]gpmTeam   `yaml:"teams,omitempty"`
+	Project gpmProject         `yaml:"project"`
+	Fields  gpmFields          `yaml:"fields"`
+	Teams   map[string]gpmTeam `yaml:"teams,omitempty"`
 }
 
 type gpmProject struct {
@@ -57,7 +81,7 @@ type gpmTeam struct {
 	Members []string `yaml:"members"`
 }
 
-// --- init で使う API レスポンス型 ---
+// --- API レスポンス型 ---
 
 type projectFieldsResponse struct {
 	Organization struct {
@@ -106,13 +130,11 @@ type projectInfo struct {
 // --- Status マッピングのプリセット ---
 
 var statusPresets = map[string]string{
-	// 英語
 	"todo": "todo", "to do": "todo", "backlog": "todo",
 	"in progress": "in_progress", "doing": "in_progress", "wip": "in_progress",
 	"in review": "in_review", "review": "in_review", "pr review": "in_review",
 	"done": "done", "closed": "done", "completed": "done",
 	"blocked": "blocked",
-	// 日本語
 	"未着手": "todo", "バックログ": "todo",
 	"着手中": "in_progress", "作業中": "in_progress", "進行中": "in_progress",
 	"レビュー中": "in_review", "レビュー待ち": "in_review",
@@ -122,24 +144,26 @@ var statusPresets = map[string]string{
 
 // runInit は初回セットアップの実際の処理。
 func runInit() error {
+	fmt.Println(headerStyle.Render("  gh-pm セットアップ  "))
+	fmt.Println()
+
 	// .gpm.yml が既に存在する場合は確認
 	if _, err := os.Stat(".gpm.yml"); err == nil {
 		var overwrite bool
-		if err := survey.AskOne(&survey.Confirm{
-			Message: ".gpm.yml は既に存在します。上書きしますか？",
-			Default: false,
-		}, &overwrite); err != nil {
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title(".gpm.yml は既に存在します。上書きしますか？").
+					Value(&overwrite),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 			return err
 		}
 		if !overwrite {
-			fmt.Println("中止しました。")
+			fmt.Println(dimStyle.Render("中止しました。"))
 			return nil
 		}
 	}
-
-	fmt.Println()
-	fmt.Println("=== gh-pm セットアップ ===")
-	fmt.Println()
 
 	// Step 1: プロジェクト指定
 	owner, number, err := selectProject()
@@ -147,14 +171,21 @@ func runInit() error {
 		return err
 	}
 
-	// Step 2: プロジェクト情報を API で取得
-	fmt.Println("\nプロジェクト情報を取得中...")
-	client, err := api.DefaultGraphQLClient()
-	if err != nil {
-		return fmt.Errorf("GitHub API クライアントの作成に失敗しました: %w", err)
-	}
+	// Step 2: API でプロジェクト情報を取得（スピナー付き）
+	var statusField string
+	var statusOptions []string
+	var allAssignees []string
 
-	statusField, statusOptions, allAssignees, err := fetchProjectMetadata(client, owner, number)
+	fmt.Print(dimStyle.Render("プロジェクト情報を取得中..."))
+	{
+		client, apiErr := api.DefaultGraphQLClient()
+		if apiErr != nil {
+			fmt.Println()
+			return apiErr
+		}
+		statusField, statusOptions, allAssignees, err = fetchProjectMetadata(client, owner, number)
+	}
+	fmt.Println(" " + successStyle.Render("✓"))
 	if err != nil {
 		return err
 	}
@@ -178,117 +209,138 @@ func runInit() error {
 // selectProject はプロジェクトの指定方法を選んで owner と number を返す。
 func selectProject() (owner string, number int, err error) {
 	var method string
-	if err = survey.AskOne(&survey.Select{
-		Message: "プロジェクトの指定方法:",
-		Options: []string{
-			"URL を貼り付け",
-			"Organization から選択",
-		},
-	}, &method); err != nil {
+	if err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("プロジェクトの指定方法").
+				Options(
+					huh.NewOption("URL を貼り付け", "url"),
+					huh.NewOption("Organization から選択", "select"),
+				).
+				Value(&method),
+		),
+	).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 		return
 	}
 
-	if method == "URL を貼り付け" {
+	if method == "url" {
 		var rawURL string
-		if err = survey.AskOne(&survey.Input{
-			Message: "プロジェクト URL:",
-			Help:    "例: https://github.com/orgs/ORG/projects/N",
-		}, &rawURL, survey.WithValidator(survey.Required)); err != nil {
+		if err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("プロジェクト URL").
+					Description("例: https://github.com/orgs/ORG/projects/N").
+					Value(&rawURL).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("URL を入力してください")
+						}
+						_, _, e := parseProjectURL(s)
+						return e
+					}),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 			return
 		}
 		owner, number, err = parseProjectURL(rawURL)
-		if err != nil {
-			err = fmt.Errorf("URL の解析に失敗しました: %w\n  形式: https://github.com/orgs/ORG/projects/N", err)
-		}
 		return
 	}
 
 	// Organization から選択
-	if err = survey.AskOne(&survey.Input{
-		Message: "Organization 名:",
-	}, &owner, survey.WithValidator(survey.Required)); err != nil {
+	if err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Organization 名").
+				Value(&owner).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("Organization 名を入力してください")
+					}
+					return nil
+				}),
+		),
+	).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 		return
 	}
 
-	fmt.Printf("\nプロジェクト一覧を取得中...\n")
-	projects, fetchErr := fetchOrgProjects(owner)
-	if fetchErr != nil {
-		err = fetchErr
+	var projects []projectInfo
+	fmt.Print(dimStyle.Render("プロジェクト一覧を取得中..."))
+	projects, err = fetchOrgProjects(owner)
+	if err != nil {
+		fmt.Println()
 		return
 	}
+	fmt.Println(" " + successStyle.Render("✓"))
 	if len(projects) == 0 {
 		err = fmt.Errorf("%s にアクセスできるプロジェクトが見つかりません", owner)
 		return
 	}
 
-	options := make([]string, len(projects))
+	options := make([]huh.Option[int], len(projects))
 	for i, p := range projects {
-		options[i] = fmt.Sprintf("#%d  %s", p.Number, p.Title)
+		options[i] = huh.NewOption(fmt.Sprintf("#%-3d  %s", p.Number, p.Title), p.Number)
 	}
 
-	var selected string
-	if err = survey.AskOne(&survey.Select{
-		Message: "プロジェクトを選択:",
-		Options: options,
-	}, &selected); err != nil {
+	if err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[int]().
+				Title("プロジェクトを選択").
+				Options(options...).
+				Value(&number),
+		),
+	).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 		return
 	}
-
-	for _, p := range projects {
-		if selected == fmt.Sprintf("#%d  %s", p.Number, p.Title) {
-			number = p.Number
-			return
-		}
-	}
-	err = fmt.Errorf("選択されたプロジェクトが見つかりません")
 	return
 }
 
 // buildStatusMapping は Status 選択肢からカテゴリマッピングを構築する。
 func buildStatusMapping(statusField string, statusOptions []string) (map[string]string, error) {
-	fmt.Printf("\nStatus フィールド「%s」の値を検出しました:\n\n", statusField)
+	fmt.Printf("\nStatus フィールド %s を検出しました:\n\n",
+		lipgloss.NewStyle().Bold(true).Render("「"+statusField+"」"))
 
-	mapping := map[string]string{} // category → status_value
+	mapping := map[string]string{}
 	var unknownOptions []string
 
 	for _, opt := range statusOptions {
 		category := autoDetectCategory(opt)
 		if category != "" {
-			fmt.Printf("  %-20s → %-12s ✓ 自動検出\n", opt, category)
+			style := categoryColors[category]
+			fmt.Printf("  %-22s → %s  %s\n",
+				opt,
+				style.Render(fmt.Sprintf("%-12s", category)),
+				dimStyle.Render("✓ 自動検出"),
+			)
 			mapping[category] = opt
 		} else {
-			fmt.Printf("  %-20s → ?\n", opt)
+			fmt.Printf("  %-22s → %s\n", opt, dimStyle.Render("? 未認識"))
 			unknownOptions = append(unknownOptions, opt)
 		}
 	}
-
-	// 未認識の値を手動でマッピング
-	if len(unknownOptions) > 0 {
-		fmt.Println("\n以下の値のカテゴリを選択してください:")
-		for _, opt := range unknownOptions {
-			var category string
-			if err := survey.AskOne(&survey.Select{
-				Message: fmt.Sprintf("「%s」のカテゴリ:", opt),
-				Options: []string{"todo", "in_progress", "in_review", "done", "blocked", "skip（使わない）"},
-			}, &category); err != nil {
-				return nil, err
-			}
-			if !strings.HasPrefix(category, "skip") {
-				mapping[category] = opt
-			}
-		}
-	}
-
 	fmt.Println()
-	var confirm bool
-	if err := survey.AskOne(&survey.Confirm{
-		Message: "このマッピングでよいですか？",
-		Default: true,
-	}, &confirm); err != nil {
-		return nil, err
-	}
-	if !confirm {
-		fmt.Println("  .gpm.yml 生成後に手動で編集してください。")
+
+	for _, opt := range unknownOptions {
+		var category string
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title(fmt.Sprintf("「%s」のカテゴリを選択", opt)).
+					Options(
+						huh.NewOption("todo        （未着手）", "todo"),
+						huh.NewOption("in_progress （作業中）", "in_progress"),
+						huh.NewOption("in_review   （レビュー中）", "in_review"),
+						huh.NewOption("done        （完了）", "done"),
+						huh.NewOption("blocked     （ブロック）", "blocked"),
+						huh.NewOption("skip        （使わない）", "skip"),
+					).
+					Value(&category),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
+			return nil, err
+		}
+		if category != "skip" {
+			mapping[category] = opt
+		}
 	}
 
 	return mapping, nil
@@ -297,23 +349,24 @@ func buildStatusMapping(statusField string, statusOptions []string) (map[string]
 // defineTeams はチーム定義をインタラクティブに行う。
 func defineTeams(allAssignees []string) (map[string][]string, error) {
 	teams := map[string][]string{}
-
 	if len(allAssignees) == 0 {
 		return teams, nil
 	}
 
-	fmt.Printf("\nプロジェクトのメンバー: %d 人\n", len(allAssignees))
+	fmt.Printf("プロジェクトのメンバー: %s 人\n\n",
+		lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("%d", len(allAssignees))))
 
 	for {
 		var addTeam bool
-		prompt := "チームを定義しますか？"
+		msg := "チームを定義しますか？"
 		if len(teams) > 0 {
-			prompt = "もう1チーム追加しますか？"
+			msg = "もう1チーム追加しますか？"
 		}
-		if err := survey.AskOne(&survey.Confirm{
-			Message: prompt,
-			Default: len(teams) == 0,
-		}, &addTeam); err != nil {
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().Title(msg).Value(&addTeam),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 			return nil, err
 		}
 		if !addTeam {
@@ -321,24 +374,41 @@ func defineTeams(allAssignees []string) (map[string][]string, error) {
 		}
 
 		var teamName string
-		if err := survey.AskOne(&survey.Input{
-			Message: "チーム名:",
-			Help:    "例: backend, frontend, mobile",
-		}, &teamName, survey.WithValidator(survey.Required)); err != nil {
-			return nil, err
+		var members []string
+
+		opts := make([]huh.Option[string], len(allAssignees))
+		for i, a := range allAssignees {
+			opts[i] = huh.NewOption(a, a)
 		}
 
-		var members []string
-		if err := survey.AskOne(&survey.MultiSelect{
-			Message: fmt.Sprintf("%s のメンバーを選択してください:", teamName),
-			Options: allAssignees,
-		}, &members); err != nil {
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("チーム名").
+					Description("例: backend, frontend, mobile").
+					Value(&teamName).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("チーム名を入力してください")
+						}
+						return nil
+					}),
+				huh.NewMultiSelect[string]().
+					Title("メンバーを選択").
+					Options(opts...).
+					Value(&members),
+			),
+		).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 			return nil, err
 		}
 
 		if len(members) > 0 {
 			teams[teamName] = members
-			fmt.Printf("  ✓ %s: %s\n", teamName, strings.Join(members, ", "))
+			fmt.Printf("%s %s: %s\n",
+				successStyle.Render("✓"),
+				lipgloss.NewStyle().Bold(true).Render(teamName),
+				dimStyle.Render(strings.Join(members, ", ")),
+			)
 		}
 	}
 
@@ -368,21 +438,21 @@ func writeConfig(owner string, number int, statusField string, mapping map[strin
 		return fmt.Errorf("YAML の生成に失敗しました: %w", err)
 	}
 
-	fmt.Printf("\n生成される .gpm.yml:\n\n")
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		fmt.Printf("  %s\n", line)
-	}
-	fmt.Println()
+	fmt.Printf("\n%s\n\n", lipgloss.NewStyle().Bold(true).Render("生成される .gpm.yml"))
+	fmt.Println(colorizeYAML(string(data)))
 
 	var write bool
-	if err := survey.AskOne(&survey.Confirm{
-		Message: "この内容で .gpm.yml を生成しますか？",
-		Default: true,
-	}, &write); err != nil {
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("この内容で .gpm.yml を生成しますか？").
+				Value(&write),
+		),
+	).WithTheme(huh.ThemeCharm()).Run(); err != nil {
 		return err
 	}
 	if !write {
-		fmt.Println("中止しました。")
+		fmt.Println(dimStyle.Render("中止しました。"))
 		return nil
 	}
 
@@ -390,39 +460,61 @@ func writeConfig(owner string, number int, statusField string, mapping map[strin
 		return fmt.Errorf("設定ファイルの書き込みに失敗しました: %w", err)
 	}
 
-	fmt.Println("\n✓ .gpm.yml を生成しました！")
 	fmt.Println()
-	fmt.Println("次のステップ:")
-	fmt.Println("  gh pm report        # 全チームの進捗を表示")
-	fmt.Println("  gh pm report <team> # チームの詳細を表示")
-	fmt.Println("  gh pm alert         # アラートを確認")
+	fmt.Println(successStyle.Render("✓ .gpm.yml を生成しました！"))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Render("次のステップ"))
+	fmt.Println(dimStyle.Render("  gh pm report        ") + "全チームの進捗を表示")
+	fmt.Println(dimStyle.Render("  gh pm report <team> ") + "チームの詳細を表示")
+	fmt.Println(dimStyle.Render("  gh pm alert         ") + "アラートを確認")
 	return nil
 }
 
-// fetchOrgProjects は Organization のプロジェクト一覧を取得する。
+// colorizeYAML は YAML 文字列をシンタックスハイライトして返す。
+func colorizeYAML(yamlStr string) string {
+	lines := strings.Split(strings.TrimRight(yamlStr, "\n"), "\n")
+	var out []string
+	for _, line := range lines {
+		// インデントを保持しつつキーと値を色付け
+		trimmed := strings.TrimLeft(line, " ")
+		indent := line[:len(line)-len(trimmed)]
+
+		if colonIdx := strings.Index(trimmed, ":"); colonIdx > 0 {
+			key := trimmed[:colonIdx]
+			rest := trimmed[colonIdx+1:]
+			colored := indent + yamlKeyStyle.Render(key) + ":"
+			if rest != "" {
+				colored += yamlValueStyle.Render(rest)
+			}
+			out = append(out, "  "+colored)
+		} else if strings.HasPrefix(trimmed, "- ") {
+			out = append(out, "  "+indent+dimStyle.Render("- ")+yamlValueStyle.Render(trimmed[2:]))
+		} else {
+			out = append(out, "  "+line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// --- API 取得関数 ---
+
 func fetchOrgProjects(owner string) ([]projectInfo, error) {
 	client, err := api.DefaultGraphQLClient()
 	if err != nil {
 		return nil, err
 	}
-
 	query := `
 query GetOrgProjects($owner: String!) {
   organization(login: $owner) {
     projectsV2(first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes {
-        number
-        title
-      }
+      nodes { number title }
     }
   }
 }`
-
 	var resp orgProjectsResponse
 	if err := client.Do(query, map[string]interface{}{"owner": owner}, &resp); err != nil {
-		return nil, fmt.Errorf("プロジェクト一覧の取得に失敗しました: %w\n  Organization 名と権限を確認してください", err)
+		return nil, fmt.Errorf("プロジェクト一覧の取得に失敗しました: %w", err)
 	}
-
 	var projects []projectInfo
 	for _, p := range resp.Organization.ProjectsV2.Nodes {
 		projects = append(projects, projectInfo{Number: p.Number, Title: p.Title})
@@ -430,16 +522,66 @@ query GetOrgProjects($owner: String!) {
 	return projects, nil
 }
 
-// parseProjectURL は GitHub Projects の URL を解析して owner と number を返す。
+func fetchProjectMetadata(client *api.GraphQLClient, owner string, number int) (statusFieldName string, statusOptions []string, assignees []string, err error) {
+	query := `
+query GetProjectMetadata($owner: String!, $number: Int!) {
+  organization(login: $owner) {
+    projectV2(number: $number) {
+      fields(first: 30) {
+        nodes {
+          __typename
+          ... on ProjectV2SingleSelectField {
+            name
+            options { name }
+          }
+        }
+      }
+      items(first: 100) {
+        nodes {
+          content {
+            ... on Issue { assignees(first: 10) { nodes { login } } }
+            ... on PullRequest { assignees(first: 10) { nodes { login } } }
+          }
+        }
+      }
+    }
+  }
+}`
+	variables := map[string]interface{}{"owner": owner, "number": number}
+	var resp projectFieldsResponse
+	if err = client.Do(query, variables, &resp); err != nil {
+		err = fmt.Errorf("プロジェクト情報の取得に失敗しました: %w", err)
+		return
+	}
+	for _, field := range resp.Organization.ProjectV2.Fields.Nodes {
+		if field.TypeName == "ProjectV2SingleSelectField" && strings.EqualFold(field.Name, "Status") {
+			statusFieldName = field.Name
+			for _, opt := range field.Options {
+				statusOptions = append(statusOptions, opt.Name)
+			}
+			break
+		}
+	}
+	if statusFieldName == "" {
+		err = fmt.Errorf("Status フィールドが見つかりません")
+		return
+	}
+	seen := map[string]bool{}
+	for _, item := range resp.Organization.ProjectV2.Items.Nodes {
+		for _, a := range item.Content.Assignees.Nodes {
+			if a.Login != "" && !seen[a.Login] {
+				seen[a.Login] = true
+				assignees = append(assignees, a.Login)
+			}
+		}
+	}
+	return
+}
+
 func parseProjectURL(rawURL string) (string, int, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	rawURL = strings.TrimRight(rawURL, "/")
-
 	parts := strings.Split(rawURL, "/")
-	if len(parts) < 2 {
-		return "", 0, fmt.Errorf("不正な URL")
-	}
-
 	var org string
 	var num int
 	for i, part := range parts {
@@ -450,88 +592,12 @@ func parseProjectURL(rawURL string) (string, int, error) {
 			fmt.Sscanf(parts[i+1], "%d", &num)
 		}
 	}
-
 	if org == "" || num == 0 {
-		return "", 0, fmt.Errorf("Organization 名またはプロジェクト番号を検出できません")
+		return "", 0, fmt.Errorf("Organization 名またはプロジェクト番号を検出できません\n  形式: https://github.com/orgs/ORG/projects/N")
 	}
-
 	return org, num, nil
 }
 
-// fetchProjectMetadata はプロジェクトの Status フィールド情報とアサイニーを取得する。
-func fetchProjectMetadata(client *api.GraphQLClient, owner string, number int) (statusFieldName string, statusOptions []string, assignees []string, err error) {
-	query := `
-query GetProjectMetadata($owner: String!, $number: Int!) {
-  organization(login: $owner) {
-    projectV2(number: $number) {
-      title
-      fields(first: 30) {
-        nodes {
-          __typename
-          ... on ProjectV2SingleSelectField {
-            name
-            options {
-              name
-            }
-          }
-        }
-      }
-      items(first: 100) {
-        nodes {
-          content {
-            ... on Issue {
-              assignees(first: 10) { nodes { login } }
-            }
-            ... on PullRequest {
-              assignees(first: 10) { nodes { login } }
-            }
-          }
-        }
-      }
-    }
-  }
-}`
-
-	variables := map[string]interface{}{
-		"owner":  owner,
-		"number": number,
-	}
-
-	var resp projectFieldsResponse
-	if err = client.Do(query, variables, &resp); err != nil {
-		err = fmt.Errorf("プロジェクト情報の取得に失敗しました: %w", err)
-		return
-	}
-
-	for _, field := range resp.Organization.ProjectV2.Fields.Nodes {
-		if field.TypeName == "ProjectV2SingleSelectField" && strings.EqualFold(field.Name, "Status") {
-			statusFieldName = field.Name
-			for _, opt := range field.Options {
-				statusOptions = append(statusOptions, opt.Name)
-			}
-			break
-		}
-	}
-
-	if statusFieldName == "" {
-		err = fmt.Errorf("Status フィールドが見つかりません\n  GitHub Projects の設定画面で Status フィールドを確認してください")
-		return
-	}
-
-	seen := map[string]bool{}
-	for _, item := range resp.Organization.ProjectV2.Items.Nodes {
-		for _, a := range item.Content.Assignees.Nodes {
-			if a.Login != "" && !seen[a.Login] {
-				seen[a.Login] = true
-				assignees = append(assignees, a.Login)
-			}
-		}
-	}
-
-	return
-}
-
-// autoDetectCategory は Status 値からカテゴリを自動推定する。
 func autoDetectCategory(statusValue string) string {
 	lower := strings.ToLower(strings.TrimSpace(statusValue))
 	if cat, ok := statusPresets[lower]; ok {
