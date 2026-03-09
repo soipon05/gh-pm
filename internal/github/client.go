@@ -3,11 +3,50 @@ package github
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 )
+
+// cacheTTL はキャッシュの有効期間。
+// 同一セッション内で繰り返し実行しても API を叩き直さない。
+const cacheTTL = 5 * time.Minute
+
+type cacheEntry struct {
+	FetchedAt time.Time     `json:"fetched_at"`
+	Items     []ProjectItem `json:"items"`
+}
+
+func cacheFilePath(owner string, projectNumber int) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("gh-pm-%s-%d.json", owner, projectNumber))
+}
+
+func readCache(owner string, projectNumber int) ([]ProjectItem, bool) {
+	data, err := os.ReadFile(cacheFilePath(owner, projectNumber))
+	if err != nil {
+		return nil, false
+	}
+	var entry cacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return nil, false
+	}
+	if time.Since(entry.FetchedAt) > cacheTTL {
+		return nil, false
+	}
+	return entry.Items, true
+}
+
+func writeCache(owner string, projectNumber int, items []ProjectItem) {
+	data, err := json.Marshal(cacheEntry{FetchedAt: time.Now(), Items: items})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(cacheFilePath(owner, projectNumber), data, 0600)
+}
 
 //go:embed queries/project_items.graphql
 var projectItemsQuery string
@@ -116,7 +155,8 @@ type ProjectItem struct {
 // Client は GitHub Projects API のラッパー。
 // go-gh の GraphQL クライアントをラップして、このツール向けの型で返す。
 type Client struct {
-	gql gqlClient
+	gql     gqlClient
+	noCache bool // テスト時は true にしてキャッシュをバイパスする
 }
 
 // NewClient は go-gh の認証情報を使って Client を生成する。
@@ -133,7 +173,7 @@ func NewClient() (*Client, error) {
 
 // newTestClient はテスト用の Client を生成する。モック GQL クライアントを注入できる。
 func newTestClient(gql gqlClient) *Client {
-	return &Client{gql: gql}
+	return &Client{gql: gql, noCache: true}
 }
 
 // itemsPerPage は1回の API リクエストで取得するアイテム数。
@@ -148,6 +188,12 @@ const itemsPerPage = 100
 //
 // 注意: StatusCategory は設定されない。呼び出し元が config.CategoryOf() で設定すること。
 func (c *Client) ListProjectItems(owner string, projectNumber int, statusFieldName string) ([]ProjectItem, error) {
+	if !c.noCache {
+		if cached, ok := readCache(owner, projectNumber); ok {
+			return cached, nil
+		}
+	}
+
 	var allItems []ProjectItem
 	var cursor interface{} // 最初は nil（= GraphQL の null）
 	now := time.Now()
@@ -179,6 +225,9 @@ func (c *Client) ListProjectItems(owner string, projectNumber int, statusFieldNa
 		cursor = items.PageInfo.EndCursor
 	}
 
+	if !c.noCache {
+		writeCache(owner, projectNumber, allItems)
+	}
 	return allItems, nil
 }
 
