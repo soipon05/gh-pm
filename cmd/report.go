@@ -187,6 +187,8 @@ func buildTeamSummary(name string, items []gh.ProjectItem, alertLevels map[int]s
 			ts.InProgress = append(ts.InProgress, ri)
 		case "in_review":
 			ts.InReview = append(ts.InReview, ri)
+		case "staging":
+			ts.Staging = append(ts.Staging, ri)
 		case "done":
 			ts.Done = append(ts.Done, ri)
 		}

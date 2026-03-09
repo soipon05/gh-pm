@@ -17,9 +17,9 @@ import (
 var (
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("99")). // purple
+			Foreground(lipgloss.Color("33")). // blue
 			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("99")).
+			BorderForeground(lipgloss.Color("33")).
 			Padding(0, 2)
 
 	successStyle = lipgloss.NewStyle().
@@ -38,6 +38,7 @@ var (
 	categoryColors = map[string]lipgloss.Style{
 		"in_progress": lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")), // yellow
 		"in_review":   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")),  // blue
+		"staging":     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51")),  // teal
 		"todo":        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252")), // light gray
 		"done":        lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")),  // green
 		"blocked":     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")), // red
@@ -132,13 +133,16 @@ type projectInfo struct {
 var statusPresets = map[string]string{
 	"todo": "todo", "to do": "todo", "backlog": "todo",
 	"in progress": "in_progress", "doing": "in_progress", "wip": "in_progress",
-	"in review": "in_review", "review": "in_review", "pr review": "in_review",
-	"done": "done", "closed": "done", "completed": "done",
+	"in review": "in_review", "review": "in_review", "pr review": "in_review", "code review": "in_review",
+	"staging": "staging", "staging review": "staging", "stg": "staging",
+	"qa": "staging", "testing": "staging", "uat": "staging",
+	"done": "done", "closed": "done", "completed": "done", "released": "done",
 	"blocked": "blocked",
 	"未着手": "todo", "バックログ": "todo",
 	"着手中": "in_progress", "作業中": "in_progress", "進行中": "in_progress",
-	"レビュー中": "in_review", "レビュー待ち": "in_review",
-	"完了": "done",
+	"レビュー中": "in_review", "レビュー待ち": "in_review", "コードレビュー": "in_review",
+	"ステージング": "staging", "ステージングレビュー": "staging", "確認待ち": "staging", "QA中": "staging",
+	"完了": "done", "リリース済み": "done",
 	"ブロック": "blocked",
 }
 
@@ -329,6 +333,7 @@ func buildStatusMapping(statusField string, statusOptions []string) (map[string]
 						huh.NewOption("todo        （未着手）", "todo"),
 						huh.NewOption("in_progress （作業中）", "in_progress"),
 						huh.NewOption("in_review   （レビュー中）", "in_review"),
+						huh.NewOption("staging     （ステージング確認）", "staging"),
 						huh.NewOption("done        （完了）", "done"),
 						huh.NewOption("blocked     （ブロック）", "blocked"),
 						huh.NewOption("skip        （使わない）", "skip"),
@@ -353,11 +358,14 @@ func defineTeams(allAssignees []string) (map[string][]string, error) {
 		return teams, nil
 	}
 
+	// 現在の認証ユーザーを取得してプリセレクトに使う
+	currentUser, _ := fetchCurrentUser()
+
 	fmt.Printf("プロジェクトのメンバー: %s 人\n\n",
 		lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("%d", len(allAssignees))))
 
 	for {
-		var addTeam bool
+		addTeam := len(teams) == 0 // 最初の1チームは Yes がデフォルト
 		msg := "チームを定義しますか？"
 		if len(teams) > 0 {
 			msg = "もう1チーム追加しますか？"
@@ -374,7 +382,15 @@ func defineTeams(allAssignees []string) (map[string][]string, error) {
 		}
 
 		var teamName string
-		var members []string
+
+		// 自分をデフォルトでプリセレクト
+		members := []string{}
+		for _, a := range allAssignees {
+			if a == currentUser {
+				members = []string{currentUser}
+				break
+			}
+		}
 
 		opts := make([]huh.Option[string], len(allAssignees))
 		for i, a := range allAssignees {
@@ -395,6 +411,7 @@ func defineTeams(allAssignees []string) (map[string][]string, error) {
 					}),
 				huh.NewMultiSelect[string]().
 					Title("メンバーを選択").
+					Description(fmt.Sprintf("スペースで選択、Enter で確定（あなた: %s）", dimStyle.Render(currentUser))).
 					Options(opts...).
 					Value(&members),
 			),
@@ -441,7 +458,7 @@ func writeConfig(owner string, number int, statusField string, mapping map[strin
 	fmt.Printf("\n%s\n\n", lipgloss.NewStyle().Bold(true).Render("生成される .gpm.yml"))
 	fmt.Println(colorizeYAML(string(data)))
 
-	var write bool
+	write := true // YES がデフォルト
 	if err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
@@ -596,6 +613,21 @@ func parseProjectURL(rawURL string) (string, int, error) {
 		return "", 0, fmt.Errorf("Organization 名またはプロジェクト番号を検出できません\n  形式: https://github.com/orgs/ORG/projects/N")
 	}
 	return org, num, nil
+}
+
+// fetchCurrentUser は認証済み GitHub ユーザーのログイン名を返す。
+func fetchCurrentUser() (string, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return "", err
+	}
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := client.Get("user", &user); err != nil {
+		return "", err
+	}
+	return user.Login, nil
 }
 
 func autoDetectCategory(statusValue string) string {

@@ -28,6 +28,7 @@ type TeamSummary struct {
 	Todo       []Item
 	InProgress []Item
 	InReview   []Item
+	Staging    []Item
 	Done       []Item
 }
 
@@ -37,7 +38,7 @@ type Item struct {
 	Title          string
 	Assignees      []string
 	Status         string
-	StatusCategory string // "todo" / "in_progress" / "in_review" / "done" / "blocked"
+	StatusCategory string // "todo" / "in_progress" / "in_review" / "staging" / "done" / "blocked"
 	ElapsedDays    int
 	AlertLevel     string // "" / "warning" / "critical"
 }
@@ -52,21 +53,22 @@ func PrintSummaryTable(teams []TeamSummary, noColor bool) {
 	fmt.Printf("=== プロジェクト進捗 (%s) ===\n\n", now.Format("2006-01-02"))
 
 	// ヘッダー
-	fmt.Printf("%s  %5s  %12s  %10s  %8s\n", padRight("チーム", 12), "Todo", "In Progress", "In Review", "Done(7d)")
-	fmt.Println("──────────────────────────────────────────────────")
+	fmt.Printf("%s  %5s  %12s  %10s  %9s  %8s\n", padRight("チーム", 12), "Todo", "In Progress", "In Review", "Staging", "Done(7d)")
+	fmt.Println("────────────────────────────────────────────────────────────")
 
-	totalTodo, totalIP, totalIR, totalDone := 0, 0, 0, 0
+	totalTodo, totalIP, totalIR, totalStg, totalDone := 0, 0, 0, 0, 0
 	for _, t := range teams {
-		fmt.Printf("%s  %5d  %12d  %10d  %8d\n",
-			padRight(t.Name, 12), len(t.Todo), len(t.InProgress), len(t.InReview), len(t.Done))
+		fmt.Printf("%s  %5d  %12d  %10d  %9d  %8d\n",
+			padRight(t.Name, 12), len(t.Todo), len(t.InProgress), len(t.InReview), len(t.Staging), len(t.Done))
 		totalTodo += len(t.Todo)
 		totalIP += len(t.InProgress)
 		totalIR += len(t.InReview)
+		totalStg += len(t.Staging)
 		totalDone += len(t.Done)
 	}
 
 	fmt.Println()
-	fmt.Printf("%s  %5d  %12d  %10d  %8d\n", padRight("合計:", 12), totalTodo, totalIP, totalIR, totalDone)
+	fmt.Printf("%s  %5d  %12d  %10d  %9d  %8d\n", padRight("合計:", 12), totalTodo, totalIP, totalIR, totalStg, totalDone)
 }
 
 // PrintTeamDetail は1チームの詳細をターミナルに出力する。
@@ -79,6 +81,7 @@ func PrintTeamDetail(team TeamSummary, noColor bool) {
 
 	printStatusSection("In Progress", "in_progress", team.InProgress, noColor)
 	printStatusSection("In Review", "in_review", team.InReview, noColor)
+	printStatusSection("Staging", "staging", team.Staging, noColor)
 	printStatusSection("Todo", "todo", team.Todo, noColor)
 }
 
@@ -135,6 +138,8 @@ func statusDot(statusCategory string, noColor bool) string {
 		return color.YellowString("●")
 	case "in_review":
 		return color.BlueString("●")
+	case "staging":
+		return color.CyanString("●")
 	case "todo":
 		return color.WhiteString("●")
 	case "done":
