@@ -64,6 +64,8 @@ func init() {
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newSnapshotCmd())
 	rootCmd.AddCommand(newAnalyzeCmd())
+	rootCmd.AddCommand(newStandupCmd())
+	rootCmd.AddCommand(newRetroCmd())
 }
 
 // loadConfig は設定ファイルを読み込んで appConfig にセットする。

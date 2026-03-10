@@ -53,7 +53,19 @@ type StatusValuesConfig struct {
 
 // TeamConfig は .gpm.yml の `teams.<name>:` セクション。
 type TeamConfig struct {
-	Members []string `yaml:"members"` // GitHub ID のリスト
+	Members []string          `yaml:"members"`          // GitHub ID のリスト
+	Levels  map[string]string `yaml:"levels,omitempty"` // github_id -> "junior"/"mid"/"senior"
+}
+
+// MemberLevel はメンバーのレベルを返す。未設定の場合は "mid"。
+func (t *TeamConfig) MemberLevel(githubID string) string {
+	if t.Levels == nil {
+		return "mid"
+	}
+	if level, ok := t.Levels[githubID]; ok {
+		return level
+	}
+	return "mid"
 }
 
 // AlertConfig は .gpm.yml の `alerts:` セクション。
@@ -243,6 +255,18 @@ func (c *Config) CategoryOf(statusName string) string {
 		}
 	}
 	return ""
+}
+
+// MemberLevelOf はチームをまたいでメンバーのレベルを返す。未設定の場合は "mid"。
+func (c *Config) MemberLevelOf(githubID string) string {
+	for _, team := range c.Teams {
+		for _, m := range team.Members {
+			if m == githubID {
+				return team.MemberLevel(githubID)
+			}
+		}
+	}
+	return "mid"
 }
 
 // TeamOf は GitHub ID からチーム名を返す。
